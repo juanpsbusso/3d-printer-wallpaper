@@ -7,7 +7,7 @@ const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
-const BED_SURFACE_Y = 20; // Fixed height of the print bed surface
+const BED_SURFACE_Y = 20;
 
 let printSpeed = 1.0;
 let lastNonZeroSpeed = 1.0;
@@ -31,7 +31,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.15;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(userBgColor);
@@ -70,6 +70,11 @@ scene.add(keyLight);
 const fillLight = new THREE.DirectionalLight(0x88b4ff, 0.55);
 fillLight.position.set(-180, 120, -150);
 scene.add(fillLight);
+
+// Rim light to highlight layer ridges and silhouette details (especially in Night Mode)
+const rimLight = new THREE.DirectionalLight(0x99ccff, 0.35);
+rimLight.position.set(-120, 190, -210);
+scene.add(rimLight);
 
 const bottomBounceLight = new THREE.DirectionalLight(0x445577, 0.3);
 bottomBounceLight.position.set(0, -100, 50);
@@ -154,8 +159,7 @@ function buildPrinter() {
     });
   });
 
-  // Vertical Z guide rods on corners
-  const zRodGeo = new THREE.CylinderGeometry(2.2, 2.2, frameH - 16, 12);
+  const zRodGeo = new THREE.CylinderGeometry(2.5, 2.5, frameH - 16, 12);
   [[-frameW / 2 + 12, -frameW / 2 + 12], [frameW / 2 - 12, -frameW / 2 + 12],
    [-frameW / 2 + 12, frameW / 2 - 12], [frameW / 2 - 12, frameW / 2 - 12]].forEach(([x, z]) => {
     const rod = new THREE.Mesh(zRodGeo, railMaterial);
@@ -183,21 +187,56 @@ bedAssembly.add(bedNeonOutline);
 let bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x3a4052, 0x262a36);
 bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
+
+// --- DISCREET BUILD PLATE WATERMARK ("Jacataca*") ---
+function createBedWatermarkMesh() {
+  const wmCanvas = document.createElement('canvas');
+  wmCanvas.width = 512;
+  wmCanvas.height = 128;
+  const ctx = wmCanvas.getContext('2d');
+
+  ctx.clearRect(0, 0, wmCanvas.width, wmCanvas.height);
+  ctx.font = '600 44px "Segoe UI", system-ui, -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('Jacataca*', wmCanvas.width - 16, wmCanvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(wmCanvas);
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const wmMat = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0.26,
+    color: new THREE.Color('#9aa6bd'),
+    depthWrite: false
+  });
+
+  const wmGeo = new THREE.PlaneGeometry(54, 13.5);
+  wmGeo.rotateX(-Math.PI / 2);
+
+  const mesh = new THREE.Mesh(wmGeo, wmMat);
+  // Positioned discreetly on the front-right edge of the build plate like PEI silkscreen branding
+  mesh.position.set(BED_SIZE / 2 - 31, 0.28, BED_SIZE / 2 - 11);
+  return mesh;
+}
+
+const bedWatermarkMesh = createBedWatermarkMesh();
+bedAssembly.add(bedWatermarkMesh);
 printerGroup.add(bedAssembly);
 
-// Flying Gantry Assembly (moves in Y as layers build up, and in Z for depth)
+// Flying Gantry Assembly
 const gantryYAssembly = new THREE.Group();
 gantryYAssembly.position.y = BED_SURFACE_Y + 20;
 printerGroup.add(gantryYAssembly);
 
-// Side Y-rails that ride up with the Z gantry
 const sideRailGeo = new THREE.CylinderGeometry(2.5, 2.5, BED_SIZE + 30, 12).rotateX(Math.PI / 2);
 [-BED_SIZE / 2 - 13, BED_SIZE / 2 + 13].forEach(x => {
   const sRail = new THREE.Mesh(sideRailGeo, railMaterial);
   gantryYAssembly.add(sRail);
 });
 
-// X-bridge moving front-to-back (Z axis)
 const gantryBridge = new THREE.Group();
 const xRail = new THREE.Mesh(
   new THREE.CylinderGeometry(3, 3, BED_SIZE + 26, 12).rotateZ(Math.PI / 2),
@@ -206,7 +245,7 @@ const xRail = new THREE.Mesh(
 gantryBridge.add(xRail);
 gantryYAssembly.add(gantryBridge);
 
-// Extruder Toolhead (nozzle tip sits at y = -20 relative to gantryYAssembly)
+// Extruder Toolhead
 const toolhead = new THREE.Group();
 const carriage = new THREE.Mesh(new THREE.BoxGeometry(22, 24, 22), chassisMaterial);
 carriage.position.y = 8;
@@ -242,9 +281,9 @@ toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Camera framing anchored cleanly to the fixed print bed
+// Camera framing anchored to the fixed print bed
 function applyCameraPreset(view) {
-  const focusY = BED_SURFACE_Y + 38; // Anchored to fixed bed + model height
+  const focusY = BED_SURFACE_Y + 38;
 
   if (view === 'view-front') {
     controls.target.set(0, focusY, 0);
@@ -253,7 +292,6 @@ function applyCameraPreset(view) {
     controls.target.set(0, BED_SURFACE_Y + 15, 0);
     camera.position.set(0, BED_SURFACE_Y + 290, 25);
   } else {
-    // 'view-iso' (3D)
     controls.target.set(0, focusY, 0);
     camera.position.set(205, focusY + 105, 225);
   }
@@ -297,7 +335,7 @@ function setChassisOpacity(alpha) {
   }
 }
 
-// --- NIGHT MODE ---
+// --- NIGHT MODE (Enhanced specular highlights & rim light for layer details) ---
 function setNightMode(enabled) {
   isNightMode = enabled;
   nightModeToggle.checked = enabled;
@@ -311,10 +349,14 @@ function setNightMode(enabled) {
     scene.background.set(darkBg);
     scene.fog.color.set(darkBg);
 
-    ambientLight.intensity = 0.14;
-    keyLight.intensity = 0.45;
-    keyLight.color.set('#b8d0ff');
-    fillLight.intensity = 0.25;
+    // Balanced dark ambiance with crisp directional + rim specular highlights on layers
+    ambientLight.intensity = 0.22;
+    keyLight.intensity = 1.15;
+    keyLight.color.set('#dce8ff');
+    fillLight.intensity = 0.45;
+    fillLight.color.set('#5588ff');
+    rimLight.intensity = 0.95;
+    rimLight.color.set('#aaddff');
 
     bedMaterial.color.set('#0b0d12');
     bedMaterial.roughness = 0.35;
@@ -325,12 +367,19 @@ function setNightMode(enabled) {
     bedGrid.position.y = 0.2;
     bedAssembly.add(bedGrid);
 
-    filamentMaterial.emissive.copy(filamentMaterial.color);
-    filamentMaterial.emissiveIntensity = 0.22;
+    // Subtle cyan tint on the build plate watermark in Night Mode
+    bedWatermarkMesh.material.color.set('#38bdf8');
+    bedWatermarkMesh.material.opacity = 0.36;
 
-    nozzleLight.intensity = 4.5;
-    nozzleLight.distance = 85;
-    nozzle.material.emissiveIntensity = 0.55;
+    // Glossy satin finish so every printed layer catches sharp light reflections
+    filamentMaterial.roughness = 0.21;
+    filamentMaterial.metalness = 0.16;
+    filamentMaterial.emissive.copy(filamentMaterial.color);
+    filamentMaterial.emissiveIntensity = 0.18;
+
+    nozzleLight.intensity = 5.2;
+    nozzleLight.distance = 95;
+    nozzle.material.emissiveIntensity = 0.65;
   } else {
     scene.background.set(userBgColor);
     scene.fog.color.set(userBgColor);
@@ -339,6 +388,9 @@ function setNightMode(enabled) {
     keyLight.intensity = 1.55;
     keyLight.color.set('#ffffff');
     fillLight.intensity = 0.55;
+    fillLight.color.set('#88b4ff');
+    rimLight.intensity = 0.35;
+    rimLight.color.set('#99ccff');
 
     bedMaterial.color.set('#181a20');
     bedMaterial.roughness = 0.65;
@@ -349,6 +401,11 @@ function setNightMode(enabled) {
     bedGrid.position.y = 0.2;
     bedAssembly.add(bedGrid);
 
+    bedWatermarkMesh.material.color.set('#9aa6bd');
+    bedWatermarkMesh.material.opacity = 0.26;
+
+    filamentMaterial.roughness = 0.36;
+    filamentMaterial.metalness = 0.08;
     filamentMaterial.emissiveIntensity = 0.0;
 
     nozzleLight.intensity = 2.2;
@@ -1055,7 +1112,6 @@ function animate() {
     const tipY = currentSeg.start.y;
     const tipZ = THREE.MathUtils.lerp(currentSeg.start.z, currentSeg.end.z, frac);
 
-    // Bed stays fixed at BED_SURFACE_Y; gantry rises smoothly with layer height
     gantryBridge.position.z = tipZ;
     toolhead.position.x = tipX;
     gantryYAssembly.position.y = BED_SURFACE_Y + tipY + 20;
