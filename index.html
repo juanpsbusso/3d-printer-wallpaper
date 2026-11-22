@@ -17,10 +17,16 @@
 <body>
   <canvas id="canvas3d"></canvas>
 
-  <!-- UI flotante discreta (aparece al mover el mouse) -->
-  <div id="ui-container" class="ui-hidden">
+  <!-- Botón discreto para mostrar/ocultar el panel -->
+  <button id="toggleUiBtn" title="Mostrar/Ocultar configuración">⚙️</button>
+
+  <!-- UI flotante -->
+  <div id="ui-container">
     <div class="panel">
-      <h3>Simulador Impresión 3D</h3>
+      <div class="panel-header">
+        <h3>Simulador Impresión 3D</h3>
+        <button id="closeUiBtn" title="Ocultar panel">✕</button>
+      </div>
 
       <label class="file-btn">
         📂 Cargar archivo .STL
@@ -35,6 +41,11 @@
       <div class="control-group">
         <label for="printerColor">Chasis Impresora</label>
         <input type="color" id="printerColor" value="#242730" />
+      </div>
+
+      <div class="control-group">
+        <label for="chassisOpacitySlider">Opacidad Chasis: <span id="chassisOpacityVal">100%</span></label>
+        <input type="range" id="chassisOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0" />
       </div>
 
       <div class="control-group">
