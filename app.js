@@ -5,15 +5,18 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 // --- CONFIGURACIÓN GENERAL ---
 const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
-const LAYER_HEIGHT = 0.45;
+const LAYER_HEIGHT = 0.55; // Altura de capa visual con relieve 3D
+const BEAD_RADIUS = 0.34;  // Grosor del cordón de filamento extruido
 
 let printSpeed = 1.0;
+let infillDensity = 20; // Porcentaje de relleno (0 = hueco)
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
 let toolpathPoints = [];
 let isLooping = true;
 let isCameraLocked = false;
+let currentRawGeometry = null;
 
 // --- ESCENA, CÁMARA Y RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -22,47 +25,52 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#0d0f14');
-scene.fog = new THREE.FogExp2('#0d0f14', 0.0016);
+scene.fog = new THREE.FogExp2('#0d0f14', 0.0015);
 
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
-camera.position.set(220, 190, 240);
+camera.position.set(220, 185, 240);
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
-controls.dampingFactor = 0.08;
+controls.dampingFactor = 0.07;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
 controls.enableZoom = true;
 controls.rotateSpeed = 0.45;
 controls.zoomSpeed = 0.85;
 controls.panSpeed = 0.7;
-controls.minDistance = 80;
+controls.minDistance = 75;
 controls.maxDistance = 650;
 controls.target.set(0, 65, 0);
 controls.autoRotate = true;
-controls.autoRotateSpeed = 0.6;
+controls.autoRotateSpeed = 0.5;
 
-canvas.addEventListener('pointerdown', () => {
-  window.focus();
-});
+canvas.addEventListener('pointerdown', () => window.focus());
 
-// --- ILUMINACIÓN ---
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+// --- ILUMINACIÓN PARA RESALTAR VOLUMEN Y CAPAS ---
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.42);
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.3);
-dirLight.position.set(150, 260, 180);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 1024;
-dirLight.shadow.mapSize.height = 1024;
-scene.add(dirLight);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.55);
+keyLight.position.set(160, 280, 190);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.width = 1024;
+keyLight.shadow.mapSize.height = 1024;
+keyLight.shadow.bias = -0.0005;
+scene.add(keyLight);
 
-const rimLight = new THREE.DirectionalLight(0x6699ff, 0.45);
-rimLight.position.set(-160, 120, -140);
-scene.add(rimLight);
+const fillLight = new THREE.DirectionalLight(0x88b4ff, 0.55);
+fillLight.position.set(-180, 120, -150);
+scene.add(fillLight);
+
+const bottomBounceLight = new THREE.DirectionalLight(0x445577, 0.3);
+bottomBounceLight.position.set(0, -100, 50);
+scene.add(bottomBounceLight);
 
 // --- MATERIALES DINÁMICOS ---
 const chassisMaterial = new THREE.MeshStandardMaterial({
@@ -70,8 +78,8 @@ const chassisMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.45,
   metalness: 0.65,
   transparent: true,
-  opacity: 1.0,
-  depthWrite: true
+  opacity: 0.35,
+  depthWrite: false
 });
 
 const railMaterial = new THREE.MeshStandardMaterial({
@@ -79,18 +87,22 @@ const railMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.25,
   metalness: 0.85,
   transparent: true,
-  opacity: 1.0
+  opacity: 0.45,
+  depthWrite: false
 });
 
 const bedMaterial = new THREE.MeshStandardMaterial({
   color: '#181a20',
-  roughness: 0.7,
-  metalness: 0.2
+  roughness: 0.65,
+  metalness: 0.25
 });
 
-const filamentMaterial = new THREE.LineBasicMaterial({
+// Material PBR con brillo satinado estilo PLA para que cada capa tenga luz y sombra real
+const filamentMaterial = new THREE.MeshStandardMaterial({
   color: '#00a8ff',
-  linewidth: 2
+  roughness: 0.36,
+  metalness: 0.08,
+  flatShading: false
 });
 
 function setChassisOpacity(alpha) {
@@ -124,7 +136,6 @@ function buildPrinter() {
   offsets.forEach(([x, y, z]) => {
     const pillar = new THREE.Mesh(pillarGeo, chassisMaterial);
     pillar.position.set(x, y, z);
-    pillar.castShadow = true;
     printerGroup.add(pillar);
   });
 
@@ -197,16 +208,118 @@ const nozzle = new THREE.Mesh(
 nozzle.position.y = -16.5;
 toolhead.add(nozzle);
 
-const nozzleLight = new THREE.PointLight('#ff9933', 1.8, 45);
+const nozzleLight = new THREE.PointLight('#ff9933', 2.2, 42);
 nozzleLight.position.set(0, -18, 0);
 toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-let printedLinesMesh = null;
+let printedMesh = null;
+const VERTS_PER_SEGMENT = 18; // Prisma triangular de 3 caras (6 vértices por cara = 18 vértices/segmento)
+
+// --- GENERADOR DE CORDÓN 3D CON NORMALES (SOMBREADO REAL POR CAPA) ---
+function appendBeadTriangles(p1, p2, radius, outPositions) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dz = p2.z - p1.z;
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 1e-4) return false;
+
+  // Vector perpendicular horizontal
+  const nx = -dz / len;
+  const nz = dx / len;
+
+  const rW = radius * 1.15;
+  const rH = radius * 0.85;
+
+  // 3 vértices de sección transversal (superior, inferior-izq, inferior-der)
+  const a1 = [p1.x, p1.y + rH, p1.z];
+  const b1 = [p1.x + nx * rW, p1.y - rH * 0.6, p1.z + nz * rW];
+  const c1 = [p1.x - nx * rW, p1.y - rH * 0.6, p1.z - nz * rW];
+
+  const a2 = [p2.x, p2.y + rH, p2.z];
+  const b2 = [p2.x + nx * rW, p2.y - rH * 0.6, p2.z + nz * rW];
+  const c2 = [p2.x - nx * rW, p2.y - rH * 0.6, p2.z - nz * rW];
+
+  // Cara 1 (arriba-derecha)
+  outPositions.push(...a1, ...b1, ...b2, ...a1, ...b2, ...a2);
+  // Cara 2 (arriba-izquierda)
+  outPositions.push(...c1, ...a1, ...a2, ...c1, ...a2, ...c2);
+  // Cara 3 (base)
+  outPositions.push(...b1, ...c1, ...c2, ...b1, ...c2, ...b2);
+
+  return true;
+}
+
+// --- CÁLCULO DE RELLENO INTERNO (INFILL RECTILÍNEO ±45°) ---
+function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
+  if (densityPercent <= 0 || perimeterSegments.length < 3) return [];
+
+  // Calcular bounding box 2D de la capa
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const [p1, p2] of perimeterSegments) {
+    minX = Math.min(minX, p1.x, p2.x);
+    maxX = Math.max(maxX, p1.x, p2.x);
+    minZ = Math.min(minZ, p1.z, p2.z);
+    maxZ = Math.max(maxZ, p1.z, p2.z);
+  }
+
+  // Espaciado según densidad (entre 2.2mm al 60% y 12mm al 10%)
+  const spacing = THREE.MathUtils.lerp(13.0, 2.2, (densityPercent - 10) / 50);
+  const angle = (layerIndex % 2 === 0) ? Math.PI / 4 : -Math.PI / 4;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  const cx = (minX + maxX) * 0.5;
+  const cz = (minZ + maxZ) * 0.5;
+  const diag = Math.hypot(maxX - minX, maxZ - minZ) * 0.55;
+
+  const infillSegs = [];
+  const margin = BEAD_RADIUS * 1.4; // Retraer levemente para no atravesar el perímetro
+
+  for (let u = -diag; u <= diag; u += spacing) {
+    // Línea de escaneo rotada en el plano XZ
+    const ox = cx + u * cos;
+    const oz = cz + u * sin;
+    const dx = -sin;
+    const dz = cos;
+
+    const hits = [];
+    for (const [p1, p2] of perimeterSegments) {
+      const sx = p2.x - p1.x;
+      const sz = p2.z - p1.z;
+      const denom = dx * sz - dz * sx;
+      if (Math.abs(denom) < 1e-6) continue;
+
+      const t = ((p1.x - ox) * sz - (p1.z - oz) * sx) / denom;
+      const s = ((p1.x - ox) * dz - (p1.z - oz) * dx) / denom;
+
+      if (s >= 0 && s <= 1) {
+        hits.push(t);
+      }
+    }
+
+    hits.sort((a, b) => a - b);
+
+    // Emparejar entradas y salidas del polígono (regla par-impar)
+    for (let k = 0; k + 1 < hits.length; k += 2) {
+      const tStart = hits[k] + margin;
+      const tEnd = hits[k + 1] - margin;
+      if (tEnd - tStart > 1.2) {
+        infillSegs.push([
+          new THREE.Vector3(ox + tStart * dx, sliceY, oz + tStart * dz),
+          new THREE.Vector3(ox + tEnd * dx, sliceY, oz + tEnd * dz)
+        ]);
+      }
+    }
+  }
+
+  return infillSegs;
+}
 
 // --- SLICER GEOMÉTRICO EN JAVASCRIPT ---
 function sliceGeometry(rawGeometry) {
+  currentRawGeometry = rawGeometry;
   const geo = rawGeometry.clone();
   geo.computeBoundingBox();
 
@@ -252,7 +365,7 @@ function sliceGeometry(rawGeometry) {
   }
 
   const numLayers = Math.max(1, Math.floor(modelHeight / LAYER_HEIGHT));
-  const vertices = [];
+  const positions = [];
   toolpathPoints = [];
   layerStartIndices = [];
 
@@ -277,29 +390,44 @@ function sliceGeometry(rawGeometry) {
     if (rawSegments.length === 0) continue;
 
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
-    const ordered = orderSegments(rawSegments);
 
-    ordered.forEach(([p1, p2]) => {
-      vertices.push(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
-      toolpathPoints.push({
-        start: p1,
-        end: p2,
-        layer: l + 1
-      });
+    // 1. Ordenar perímetro exterior
+    const orderedPerimeter = orderSegments(rawSegments);
+
+    // 2. Generar relleno interno (o tapas sólidas en primeras/últimas 2 capas si hay relleno)
+    const effectiveDensity = (infillDensity > 0 && (l < 2 || l >= numLayers - 2))
+      ? Math.max(infillDensity, 55)
+      : infillDensity;
+    const rawInfill = generateLayerInfill(rawSegments, sliceY, l, effectiveDensity);
+    const orderedInfill = rawInfill.length > 0 ? orderSegments(rawInfill) : [];
+
+    const combined = [...orderedPerimeter, ...orderedInfill];
+
+    combined.forEach(([p1, p2]) => {
+      if (appendBeadTriangles(p1, p2, BEAD_RADIUS, positions)) {
+        toolpathPoints.push({
+          start: p1,
+          end: p2,
+          layer: l + 1
+        });
+      }
     });
   }
 
-  if (printedLinesMesh) {
-    bedAssembly.remove(printedLinesMesh);
-    printedLinesMesh.geometry.dispose();
+  if (printedMesh) {
+    bedAssembly.remove(printedMesh);
+    printedMesh.geometry.dispose();
   }
 
-  const lineGeo = new THREE.BufferGeometry();
-  lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  lineGeo.setDrawRange(0, 0);
+  const meshGeo = new THREE.BufferGeometry();
+  meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  meshGeo.computeVertexNormals();
+  meshGeo.setDrawRange(0, 0);
 
-  printedLinesMesh = new THREE.LineSegments(lineGeo, filamentMaterial);
-  bedAssembly.add(printedLinesMesh);
+  printedMesh = new THREE.Mesh(meshGeo, filamentMaterial);
+  printedMesh.castShadow = true;
+  printedMesh.receiveShadow = true;
+  bedAssembly.add(printedMesh);
 
   totalSegments = toolpathPoints.length;
   currentSegmentFloat = 0;
@@ -388,7 +516,7 @@ window.addEventListener('drop', (e) => {
   }
 });
 
-// --- SISTEMA DE BLOQUEO Y CONTROL DE CÁMARA ---
+// --- SISTEMA DE BLOQUEO Y JOYSTICKS SUAVES DE CÁMARA ---
 const quickActions = document.getElementById('quick-actions');
 const lockCameraBtn = document.getElementById('lockCameraBtn');
 const toggleCameraPadBtn = document.getElementById('toggleCameraPadBtn');
@@ -399,6 +527,113 @@ const autoRotateGroup = document.getElementById('autoRotateGroup');
 const autoRotateToggle = document.getElementById('autoRotateToggle');
 const rotateSpeedGroup = document.getElementById('rotateSpeedGroup');
 
+// Estado analógico suave de joysticks (-1 a 1)
+const joyInput = {
+  orbitX: 0, orbitY: 0,
+  panX: 0, panY: 0,
+  zoomVel: 0
+};
+const joySmooth = {
+  orbitX: 0, orbitY: 0,
+  panX: 0, panY: 0,
+  zoomVel: 0
+};
+
+function setupJoystick(baseId, stickId, onMove) {
+  const base = document.getElementById(baseId);
+  const stick = document.getElementById(stickId);
+  const maxRadius = 26;
+  let activePointer = null;
+
+  const updateStick = (clientX, clientY) => {
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > maxRadius) {
+      dx = (dx / dist) * maxRadius;
+      dy = (dy / dist) * maxRadius;
+    }
+
+    stick.style.transform = `translate(${dx}px, ${dy}px)`;
+    onMove(dx / maxRadius, dy / maxRadius);
+  };
+
+  const resetStick = () => {
+    activePointer = null;
+    stick.style.transition = 'transform 0.18s ease-out';
+    stick.style.transform = 'translate(0px, 0px)';
+    onMove(0, 0);
+  };
+
+  base.addEventListener('pointerdown', (e) => {
+    if (isCameraLocked) return;
+    e.stopPropagation();
+    base.setPointerCapture(e.pointerId);
+    activePointer = e.pointerId;
+    stick.style.transition = 'none';
+    updateStick(e.clientX, e.clientY);
+  });
+
+  base.addEventListener('pointermove', (e) => {
+    if (e.pointerId === activePointer) {
+      updateStick(e.clientX, e.clientY);
+    }
+  });
+
+  base.addEventListener('pointerup', (e) => {
+    if (e.pointerId === activePointer) resetStick();
+  });
+
+  base.addEventListener('pointercancel', (e) => {
+    if (e.pointerId === activePointer) resetStick();
+  });
+}
+
+setupJoystick('joyOrbit', 'stickOrbit', (nx, ny) => {
+  joyInput.orbitX = nx;
+  joyInput.orbitY = ny;
+});
+
+setupJoystick('joyPan', 'stickPan', (nx, ny) => {
+  joyInput.panX = nx;
+  joyInput.panY = ny;
+});
+
+// Botones de zoom suaves (mantener presionado)
+const zoomInBtn = document.getElementById('zoomInBtn');
+const zoomOutBtn = document.getElementById('zoomOutBtn');
+
+zoomInBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput.zoomVel = -1; });
+zoomInBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
+zoomInBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
+
+zoomOutBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput.zoomVel = 1; });
+zoomOutBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
+zoomOutBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
+
+// Vistas predefinidas
+document.querySelectorAll('#camera-pad button[data-cam]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (isCameraLocked) return;
+    const view = btn.getAttribute('data-cam');
+    if (view === 'view-front') {
+      controls.target.set(0, 75, 0);
+      camera.position.set(0, 85, 310);
+    } else if (view === 'view-iso') {
+      controls.target.set(0, 65, 0);
+      camera.position.set(220, 185, 240);
+    } else if (view === 'view-top') {
+      controls.target.set(0, 50, 0);
+      camera.position.set(0, 340, 25);
+    }
+    controls.update();
+  });
+});
+
 function setCameraLocked(locked) {
   isCameraLocked = locked;
   controls.enabled = !locked;
@@ -406,6 +641,7 @@ function setCameraLocked(locked) {
 
   if (locked) {
     controls.autoRotate = false;
+    joyInput.orbitX = joyInput.orbitY = joyInput.panX = joyInput.panY = joyInput.zoomVel = 0;
     lockCameraBtn.textContent = '🔒';
     lockCameraBtn.classList.add('locked-active');
     cameraPad.classList.add('pad-locked');
@@ -424,7 +660,12 @@ function setCameraLocked(locked) {
 lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked));
 lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked));
 
+const uiContainer = document.getElementById('ui-container');
+const toggleUiBtn = document.getElementById('toggleUiBtn');
+const closeUiBtn = document.getElementById('closeUiBtn');
+
 toggleCameraPadBtn.addEventListener('click', () => {
+  uiContainer.classList.add('collapsed'); // Evitar superposición de paneles
   cameraPad.classList.toggle('collapsed');
 });
 
@@ -432,115 +673,19 @@ closeCameraPadBtn.addEventListener('click', () => {
   cameraPad.classList.add('collapsed');
 });
 
-function executeCameraAction(action) {
-  if (isCameraLocked) return;
-
-  const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
-  const panStep = 14;
-  const rotStep = 0.14;
-
-  // Calcular ejes derecha y arriba de la cámara de forma segura
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
-  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
-
-  switch (action) {
-    case 'orbit-left':
-      spherical.theta += rotStep;
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-right':
-      spherical.theta -= rotStep;
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-up':
-      spherical.phi = Math.max(0.15, spherical.phi - rotStep);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-down':
-      spherical.phi = Math.min(Math.PI - 0.15, spherical.phi + rotStep);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-
-    case 'pan-left':
-      controls.target.addScaledVector(right, -panStep);
-      camera.position.addScaledVector(right, -panStep);
-      break;
-    case 'pan-right':
-      controls.target.addScaledVector(right, panStep);
-      camera.position.addScaledVector(right, panStep);
-      break;
-    case 'pan-up':
-      controls.target.addScaledVector(up, panStep);
-      camera.position.addScaledVector(up, panStep);
-      break;
-    case 'pan-down':
-      controls.target.addScaledVector(up, -panStep);
-      camera.position.addScaledVector(up, -panStep);
-      break;
-    case 'pan-center':
-      controls.target.set(0, 65, 0);
-      break;
-
-    case 'zoom-in':
-      spherical.radius = Math.max(controls.minDistance, spherical.radius * 0.88);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'zoom-out':
-      spherical.radius = Math.min(controls.maxDistance, spherical.radius * 1.14);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-
-    case 'view-front':
-      controls.target.set(0, 75, 0);
-      camera.position.set(0, 85, 310);
-      break;
-    case 'view-iso':
-    case 'reset':
-      controls.target.set(0, 65, 0);
-      camera.position.set(220, 190, 240);
-      break;
-    case 'view-top':
-      controls.target.set(0, 50, 0);
-      camera.position.set(0, 340, 25);
-      break;
-  }
-  controls.update();
-}
-
-let holdInterval = null;
-document.querySelectorAll('#camera-pad button[data-cam]').forEach(btn => {
-  const action = btn.getAttribute('data-cam');
-  const startHold = () => {
-    executeCameraAction(action);
-    clearInterval(holdInterval);
-    holdInterval = setInterval(() => executeCameraAction(action), 70);
-  };
-  const stopHold = () => clearInterval(holdInterval);
-
-  btn.addEventListener('pointerdown', startHold);
-  btn.addEventListener('pointerup', stopHold);
-  btn.addEventListener('pointerleave', stopHold);
+toggleUiBtn.addEventListener('click', () => {
+  cameraPad.classList.add('collapsed'); // Evitar superposición de paneles
+  uiContainer.classList.toggle('collapsed');
 });
 
-// --- MOSTRAR / OCULTAR PANEL DE CONFIGURACIÓN ---
-const uiContainer = document.getElementById('ui-container');
-const toggleUiBtn = document.getElementById('toggleUiBtn');
-const closeUiBtn = document.getElementById('closeUiBtn');
-
-toggleUiBtn.addEventListener('click', () => uiContainer.classList.toggle('collapsed'));
-closeUiBtn.addEventListener('click', () => uiContainer.classList.add('collapsed'));
+closeUiBtn.addEventListener('click', () => {
+  uiContainer.classList.add('collapsed');
+});
 
 // --- CONTROLES DE PERSONALIZACIÓN ---
 const filamentInput = document.getElementById('filamentColor');
+const infillSlider = document.getElementById('infillSlider');
+const infillVal = document.getElementById('infillVal');
 const printerInput = document.getElementById('printerColor');
 const chassisOpacitySlider = document.getElementById('chassisOpacitySlider');
 const chassisOpacityVal = document.getElementById('chassisOpacityVal');
@@ -551,6 +696,17 @@ const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
 const rotateSpeedVal = document.getElementById('rotateSpeedVal');
 
 filamentInput.addEventListener('input', (e) => filamentMaterial.color.set(e.target.value));
+
+infillSlider.addEventListener('input', (e) => {
+  infillDensity = parseInt(e.target.value, 10);
+  infillVal.textContent = `${infillDensity}%`;
+  if (currentRawGeometry) {
+    const prevProgress = totalSegments > 0 ? currentSegmentFloat / totalSegments : 0;
+    sliceGeometry(currentRawGeometry);
+    currentSegmentFloat = prevProgress * totalSegments;
+  }
+});
+
 printerInput.addEventListener('input', (e) => chassisMaterial.color.set(e.target.value));
 
 chassisOpacitySlider.addEventListener('input', (e) => {
@@ -606,6 +762,12 @@ window.wallpaperPropertyListener = {
       filamentMaterial.color.copy(c);
       filamentInput.value = '#' + c.getHexString();
     }
+    if (properties.infilldensity !== undefined) {
+      infillDensity = properties.infilldensity.value;
+      infillSlider.value = infillDensity;
+      infillVal.textContent = `${infillDensity}%`;
+      if (currentRawGeometry) sliceGeometry(currentRawGeometry);
+    }
     if (properties.printercolor) {
       const c = weColorToThree(properties.printercolor.value);
       chassisMaterial.color.copy(c);
@@ -657,13 +819,64 @@ const nozzleTipHeight = topY - 20;
 
 const clock = new THREE.Clock();
 
+function applySmoothJoystickCamera(dt) {
+  if (isCameraLocked) return;
+
+  // Interpolación exponencial suave para que acelerar y frenar se sientan fluidos
+  const smoothFactor = 1 - Math.exp(-10 * dt);
+  joySmooth.orbitX += (joyInput.orbitX - joySmooth.orbitX) * smoothFactor;
+  joySmooth.orbitY += (joyInput.orbitY - joySmooth.orbitY) * smoothFactor;
+  joySmooth.panX += (joyInput.panX - joySmooth.panX) * smoothFactor;
+  joySmooth.panY += (joyInput.panY - joySmooth.panY) * smoothFactor;
+  joySmooth.zoomVel += (joyInput.zoomVel - joySmooth.zoomVel) * smoothFactor;
+
+  const hasMotion =
+    Math.abs(joySmooth.orbitX) > 0.002 ||
+    Math.abs(joySmooth.orbitY) > 0.002 ||
+    Math.abs(joySmooth.panX) > 0.002 ||
+    Math.abs(joySmooth.panY) > 0.002 ||
+    Math.abs(joySmooth.zoomVel) > 0.002;
+
+  if (!hasMotion) return;
+
+  const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+
+  // Orbitar suave
+  spherical.theta -= joySmooth.orbitX * 1.6 * dt;
+  spherical.phi = THREE.MathUtils.clamp(spherical.phi + joySmooth.orbitY * 1.4 * dt, 0.15, Math.PI - 0.15);
+
+  // Zoom suave
+  spherical.radius = THREE.MathUtils.clamp(
+    spherical.radius * (1 + joySmooth.zoomVel * 1.1 * dt),
+    controls.minDistance,
+    controls.maxDistance
+  );
+
+  offset.setFromSpherical(spherical);
+  camera.position.copy(controls.target).add(offset);
+
+  // Desplazamiento (Pan) suave
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+  const panSpeed = 140 * dt;
+  controls.target.addScaledVector(right, joySmooth.panX * panSpeed);
+  camera.position.addScaledVector(right, joySmooth.panX * panSpeed);
+
+  controls.target.addScaledVector(up, -joySmooth.panY * panSpeed);
+  camera.position.addScaledVector(up, -joySmooth.panY * panSpeed);
+}
+
 function animate() {
   requestAnimationFrame(animate);
 
   const dt = Math.min(clock.getDelta(), 0.1);
 
-  if (totalSegments > 0 && printedLinesMesh) {
-    const segmentsPerSecond = Math.max(40, totalSegments * 0.04) * printSpeed;
+  if (totalSegments > 0 && printedMesh) {
+    const segmentsPerSecond = Math.max(45, totalSegments * 0.035) * printSpeed;
     currentSegmentFloat += segmentsPerSecond * dt;
 
     if (currentSegmentFloat >= totalSegments) {
@@ -678,7 +891,7 @@ function animate() {
     const frac = currentSegmentFloat - segIdx;
     const currentSeg = toolpathPoints[segIdx];
 
-    printedLinesMesh.geometry.setDrawRange(0, (segIdx + 1) * 2);
+    printedMesh.geometry.setDrawRange(0, (segIdx + 1) * VERTS_PER_SEGMENT);
 
     const tipX = THREE.MathUtils.lerp(currentSeg.start.x, currentSeg.end.x, frac);
     const tipY = currentSeg.start.y;
@@ -694,6 +907,7 @@ function animate() {
     progressInfoEl.textContent = `${pct}%`;
   }
 
+  applySmoothJoystickCamera(dt);
   controls.update();
   renderer.render(scene, camera);
 }
