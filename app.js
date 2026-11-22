@@ -217,7 +217,6 @@ function createBedWatermarkMesh() {
   wmGeo.rotateX(-Math.PI / 2);
 
   const mesh = new THREE.Mesh(wmGeo, wmMat);
-  // Positioned discreetly on the front-right edge of the build plate like PEI silkscreen branding
   mesh.position.set(BED_SIZE / 2 - 31, 0.28, BED_SIZE / 2 - 11);
   return mesh;
 }
@@ -335,7 +334,7 @@ function setChassisOpacity(alpha) {
   }
 }
 
-// --- NIGHT MODE (Enhanced specular highlights & rim light for layer details) ---
+// --- NIGHT MODE ---
 function setNightMode(enabled) {
   isNightMode = enabled;
   nightModeToggle.checked = enabled;
@@ -349,7 +348,6 @@ function setNightMode(enabled) {
     scene.background.set(darkBg);
     scene.fog.color.set(darkBg);
 
-    // Balanced dark ambiance with crisp directional + rim specular highlights on layers
     ambientLight.intensity = 0.22;
     keyLight.intensity = 1.15;
     keyLight.color.set('#dce8ff');
@@ -367,11 +365,9 @@ function setNightMode(enabled) {
     bedGrid.position.y = 0.2;
     bedAssembly.add(bedGrid);
 
-    // Subtle cyan tint on the build plate watermark in Night Mode
     bedWatermarkMesh.material.color.set('#38bdf8');
     bedWatermarkMesh.material.opacity = 0.36;
 
-    // Glossy satin finish so every printed layer catches sharp light reflections
     filamentMaterial.roughness = 0.21;
     filamentMaterial.metalness = 0.16;
     filamentMaterial.emissive.copy(filamentMaterial.color);
@@ -1016,11 +1012,15 @@ window.wallpaperPropertyListener = {
       rotateSpeedVal.textContent = val.toFixed(1);
     }
     if (properties.modelfile && properties.modelfile.value) {
-      const filePath = 'file:///' + properties.modelfile.value.replace(/\\/g, '/');
-      fetch(filePath)
-        .then(res => res.arrayBuffer())
-        .then(buf => loadSTLFromBuffer(buf))
-        .catch(err => console.error('Error loading STL from WE:', err));
+      // Strip surrounding quotes if copied with Windows "Copy as path"
+      const cleanPath = properties.modelfile.value.trim().replace(/^["']|["']$/g, '');
+      if (cleanPath.toLowerCase().endsWith('.stl')) {
+        const filePath = 'file:///' + cleanPath.replace(/\\/g, '/');
+        fetch(filePath)
+          .then(res => res.arrayBuffer())
+          .then(buf => loadSTLFromBuffer(buf))
+          .catch(err => console.error('Error loading STL from WE:', err));
+      }
     }
   }
 };
