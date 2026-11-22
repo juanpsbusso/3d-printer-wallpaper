@@ -20,48 +20,36 @@
   <!-- Botones flotantes minimalistas -->
   <div id="quick-actions">
     <button id="lockCameraBtn" class="icon-btn" title="Bloquear / Desbloquear cámara">🔓</button>
-    <button id="toggleCameraPadBtn" class="icon-btn" title="Controles de cámara">🎥</button>
+    <button id="toggleCameraPadBtn" class="icon-btn" title="Joysticks de cámara">🕹️</button>
     <button id="toggleUiBtn" class="icon-btn" title="Configuración">⚙️</button>
   </div>
 
-  <!-- Pad de Movimientos de Cámara (esquina inferior izquierda) -->
+  <!-- Panel de Joysticks de Cámara (arriba a la derecha, debajo de botones, lejos de barra de tareas) -->
   <div id="camera-pad" class="collapsed">
     <div class="pad-header">
-      <span>Control de Cámara</span>
+      <span>Control Analógico Cámara</span>
       <button id="closeCameraPadBtn" title="Cerrar">✕</button>
     </div>
 
-    <div class="pad-grid">
-      <div class="pad-section">
+    <div class="joysticks-row">
+      <div class="joy-wrapper">
         <span class="pad-label">Rotar</span>
-        <div class="dpad">
-          <button data-cam="orbit-up" title="Rotar arriba">▲</button>
-          <div class="dpad-row">
-            <button data-cam="orbit-left" title="Rotar izquierda">◀</button>
-            <button data-cam="reset" title="Vista Isométrica">⌂</button>
-            <button data-cam="orbit-right" title="Rotar derecha">▶</button>
-          </div>
-          <button data-cam="orbit-down" title="Rotar abajo">▼</button>
+        <div class="joystick-base" id="joyOrbit">
+          <div class="joystick-stick" id="stickOrbit"></div>
         </div>
       </div>
 
-      <div class="pad-section">
+      <div class="joy-wrapper">
         <span class="pad-label">Mover (Pan)</span>
-        <div class="dpad">
-          <button data-cam="pan-up" title="Subir cámara">▲</button>
-          <div class="dpad-row">
-            <button data-cam="pan-left" title="Mover izquierda">◀</button>
-            <button data-cam="pan-center" title="Centrar pieza">◎</button>
-            <button data-cam="pan-right" title="Mover derecha">▶</button>
-          </div>
-          <button data-cam="pan-down" title="Bajar cámara">▼</button>
+        <div class="joystick-base" id="joyPan">
+          <div class="joystick-stick" id="stickPan"></div>
         </div>
       </div>
     </div>
 
     <div class="pad-zoom">
-      <button data-cam="zoom-in">➕ Acercar</button>
-      <button data-cam="zoom-out">➖ Alejar</button>
+      <button id="zoomInBtn">➕ Acercar</button>
+      <button id="zoomOutBtn">➖ Alejar</button>
     </div>
 
     <div class="pad-presets">
@@ -90,13 +78,18 @@
       </div>
 
       <div class="control-group">
+        <label for="infillSlider">Relleno (Infill): <span id="infillVal">20%</span></label>
+        <input type="range" id="infillSlider" min="0" max="60" step="10" value="20" />
+      </div>
+
+      <div class="control-group">
         <label for="printerColor">Chasis Impresora</label>
         <input type="color" id="printerColor" value="#242730" />
       </div>
 
       <div class="control-group">
-        <label for="chassisOpacitySlider">Opacidad Chasis: <span id="chassisOpacityVal">100%</span></label>
-        <input type="range" id="chassisOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0" />
+        <label for="chassisOpacitySlider">Opacidad Chasis: <span id="chassisOpacityVal">35%</span></label>
+        <input type="range" id="chassisOpacitySlider" min="0.05" max="1.0" step="0.05" value="0.35" />
       </div>
 
       <div class="control-group">
@@ -120,8 +113,8 @@
       </div>
 
       <div class="control-group" id="rotateSpeedGroup">
-        <label for="rotateSpeedSlider">Vel. Rotación: <span id="rotateSpeedVal">0.6</span></label>
-        <input type="range" id="rotateSpeedSlider" min="0.1" max="3.0" step="0.1" value="0.6" />
+        <label for="rotateSpeedSlider">Vel. Rotación: <span id="rotateSpeedVal">0.5</span></label>
+        <input type="range" id="rotateSpeedSlider" min="0.1" max="3.0" step="0.1" value="0.5" />
       </div>
 
       <div class="status-bar">
