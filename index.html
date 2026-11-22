@@ -19,12 +19,14 @@
 
   <!-- Botones flotantes minimalistas -->
   <div id="quick-actions">
+    <button id="playPauseBtn" class="icon-btn" title="Pausar / Reanudar impresión">⏸️</button>
+    <button id="nightModeBtn" class="icon-btn" title="Modo Nocturno">🌙</button>
     <button id="lockCameraBtn" class="icon-btn" title="Bloquear / Desbloquear cámara">🔓</button>
     <button id="toggleCameraPadBtn" class="icon-btn" title="Joysticks de cámara">🕹️</button>
     <button id="toggleUiBtn" class="icon-btn" title="Configuración">⚙️</button>
   </div>
 
-  <!-- Panel de Joysticks de Cámara (arriba a la derecha, debajo de botones, lejos de barra de tareas) -->
+  <!-- Panel de Joysticks de Cámara -->
   <div id="camera-pad" class="collapsed">
     <div class="pad-header">
       <span>Control Analógico Cámara</span>
@@ -89,7 +91,7 @@
 
       <div class="control-group">
         <label for="chassisOpacitySlider">Opacidad Chasis: <span id="chassisOpacityVal">35%</span></label>
-        <input type="range" id="chassisOpacitySlider" min="0.05" max="1.0" step="0.05" value="0.35" />
+        <input type="range" id="chassisOpacitySlider" min="0" max="1.0" step="0.05" value="0.35" />
       </div>
 
       <div class="control-group">
@@ -99,7 +101,17 @@
 
       <div class="control-group">
         <label for="speedSlider">Velocidad: <span id="speedVal">1.0x</span></label>
-        <input type="range" id="speedSlider" min="0.2" max="5.0" step="0.2" value="1.0" />
+        <input type="range" id="speedSlider" min="0" max="5.0" step="0.1" value="1.0" />
+      </div>
+
+      <div class="control-group">
+        <label for="nightModeToggle">Modo Nocturno</label>
+        <input type="checkbox" id="nightModeToggle" />
+      </div>
+
+      <div class="control-group">
+        <label for="reverseLoopToggle">Bucle Ida y Vuelta</label>
+        <input type="checkbox" id="reverseLoopToggle" checked />
       </div>
 
       <div class="control-group">
