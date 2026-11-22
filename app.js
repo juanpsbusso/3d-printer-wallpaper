@@ -5,18 +5,22 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 // --- CONFIGURACIÓN GENERAL ---
 const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
-const LAYER_HEIGHT = 0.55; // Altura de capa visual con relieve 3D
-const BEAD_RADIUS = 0.34;  // Grosor del cordón de filamento extruido
+const LAYER_HEIGHT = 0.55;
+const BEAD_RADIUS = 0.34;
 
 let printSpeed = 1.0;
-let infillDensity = 20; // Porcentaje de relleno (0 = hueco)
+let lastNonZeroSpeed = 1.0;
+let infillDensity = 20;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
 let toolpathPoints = [];
-let isLooping = true;
+let isReverseLoop = true;
+let printDirection = 1; // 1 = imprimiendo hacia adelante, -1 = borrando en reversa
 let isCameraLocked = false;
+let isNightMode = false;
 let currentRawGeometry = null;
+let userBgColor = '#0d0f14';
 
 // --- ESCENA, CÁMARA Y RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -29,8 +33,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#0d0f14');
-scene.fog = new THREE.FogExp2('#0d0f14', 0.0015);
+scene.background = new THREE.Color(userBgColor);
+scene.fog = new THREE.FogExp2(userBgColor, 0.0015);
 
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
 camera.position.set(220, 185, 240);
@@ -52,7 +56,7 @@ controls.autoRotateSpeed = 0.5;
 
 canvas.addEventListener('pointerdown', () => window.focus());
 
-// --- ILUMINACIÓN PARA RESALTAR VOLUMEN Y CAPAS ---
+// --- ILUMINACIÓN ---
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.42);
 scene.add(ambientLight);
 
@@ -97,27 +101,24 @@ const bedMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.25
 });
 
-// Material PBR con brillo satinado estilo PLA para que cada capa tenga luz y sombra real
+const bedNeonMaterial = new THREE.MeshBasicMaterial({
+  color: '#00d2ff',
+  transparent: true,
+  opacity: 0.0
+});
+
 const filamentMaterial = new THREE.MeshStandardMaterial({
   color: '#00a8ff',
   roughness: 0.36,
   metalness: 0.08,
-  flatShading: false
+  emissive: '#00a8ff',
+  emissiveIntensity: 0.0
 });
-
-function setChassisOpacity(alpha) {
-  const val = Math.max(0.05, Math.min(1.0, alpha));
-  chassisMaterial.opacity = val;
-  chassisMaterial.depthWrite = val > 0.85;
-  chassisMaterial.needsUpdate = true;
-
-  railMaterial.opacity = Math.max(0.25, val);
-  railMaterial.depthWrite = val > 0.85;
-  railMaterial.needsUpdate = true;
-}
 
 // --- CONSTRUCCIÓN DE LA IMPRESORA COREXY ---
 const printerGroup = new THREE.Group();
+const frameStructureGroup = new THREE.Group(); // Agrupa marco y guías para ocultarlos a 0%
+printerGroup.add(frameStructureGroup);
 scene.add(printerGroup);
 
 function buildPrinter() {
@@ -136,7 +137,7 @@ function buildPrinter() {
   offsets.forEach(([x, y, z]) => {
     const pillar = new THREE.Mesh(pillarGeo, chassisMaterial);
     pillar.position.set(x, y, z);
-    printerGroup.add(pillar);
+    frameStructureGroup.add(pillar);
   });
 
   const beamXGeo = new THREE.BoxGeometry(frameW + pillarSize, pillarSize, pillarSize);
@@ -146,11 +147,11 @@ function buildPrinter() {
     [-frameW / 2, frameW / 2].forEach(pos => {
       const bx = new THREE.Mesh(beamXGeo, chassisMaterial);
       bx.position.set(0, y, pos);
-      printerGroup.add(bx);
+      frameStructureGroup.add(bx);
 
       const bz = new THREE.Mesh(beamZGeo, chassisMaterial);
       bz.position.set(pos, y, 0);
-      printerGroup.add(bz);
+      frameStructureGroup.add(bz);
     });
   });
 
@@ -159,7 +160,7 @@ function buildPrinter() {
   [-frameW / 2 + 12, frameW / 2 - 12].forEach(x => {
     const rail = new THREE.Mesh(yRailGeo, railMaterial);
     rail.position.set(x, frameH - 18, 0);
-    printerGroup.add(rail);
+    frameStructureGroup.add(rail);
   });
 }
 
@@ -172,7 +173,13 @@ bedPlate.position.y = -2;
 bedPlate.receiveShadow = true;
 bedAssembly.add(bedPlate);
 
-const bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x3a4052, 0x262a36);
+// Borde LED neón alrededor de la cama (se enciende en Modo Nocturno)
+const neonEdgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(BED_SIZE + 1.5, 4.2, BED_SIZE + 1.5));
+const bedNeonOutline = new THREE.LineSegments(neonEdgesGeo, bedNeonMaterial);
+bedNeonOutline.position.y = -2;
+bedAssembly.add(bedNeonOutline);
+
+let bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x3a4052, 0x262a36);
 bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
 printerGroup.add(bedAssembly);
@@ -194,30 +201,132 @@ const carriage = new THREE.Mesh(new THREE.BoxGeometry(22, 24, 22), chassisMateri
 carriage.position.y = 8;
 toolhead.add(carriage);
 
-const heatsink = new THREE.Mesh(
-  new THREE.CylinderGeometry(6, 6, 14, 16),
-  new THREE.MeshStandardMaterial({ color: '#c0392b', metalness: 0.7, roughness: 0.3 })
-);
+const heatsinkMaterial = new THREE.MeshStandardMaterial({
+  color: '#c0392b',
+  metalness: 0.7,
+  roughness: 0.3,
+  transparent: true,
+  opacity: 1.0
+});
+const heatsink = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 14, 16), heatsinkMaterial);
 heatsink.position.y = -6;
 toolhead.add(heatsink);
 
+// La boquilla (Nozzle) siempre permanece visible incluso con chasis al 0%
 const nozzle = new THREE.Mesh(
   new THREE.ConeGeometry(3.2, 7, 16).rotateX(Math.PI),
-  new THREE.MeshStandardMaterial({ color: '#f1c40f', metalness: 0.9, roughness: 0.2 })
+  new THREE.MeshStandardMaterial({
+    color: '#f1c40f',
+    metalness: 0.9,
+    roughness: 0.2,
+    emissive: '#ff6600',
+    emissiveIntensity: 0.15
+  })
 );
 nozzle.position.y = -16.5;
 toolhead.add(nozzle);
 
-const nozzleLight = new THREE.PointLight('#ff9933', 2.2, 42);
+const nozzleLight = new THREE.PointLight('#ff9933', 2.2, 48);
 nozzleLight.position.set(0, -18, 0);
 toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-let printedMesh = null;
-const VERTS_PER_SEGMENT = 18; // Prisma triangular de 3 caras (6 vértices por cara = 18 vértices/segmento)
+// Control de transparencia total del chasis (0% deja solo la boquilla visible)
+function setChassisOpacity(alpha) {
+  const val = Math.max(0.0, Math.min(1.0, alpha));
 
-// --- GENERADOR DE CORDÓN 3D CON NORMALES (SOMBREADO REAL POR CAPA) ---
+  if (val <= 0.01) {
+    frameStructureGroup.visible = false;
+    xRail.visible = false;
+    carriage.visible = false;
+    heatsink.visible = false;
+  } else {
+    frameStructureGroup.visible = true;
+    xRail.visible = true;
+    carriage.visible = true;
+    heatsink.visible = true;
+
+    chassisMaterial.opacity = val;
+    chassisMaterial.depthWrite = val > 0.85;
+    chassisMaterial.needsUpdate = true;
+
+    railMaterial.opacity = Math.min(1.0, val * 1.15);
+    railMaterial.depthWrite = val > 0.85;
+    railMaterial.needsUpdate = true;
+
+    heatsinkMaterial.opacity = Math.min(1.0, val * 1.35);
+    heatsinkMaterial.depthWrite = val > 0.7;
+    heatsinkMaterial.needsUpdate = true;
+  }
+}
+
+// --- MODO NOCTURNO ---
+function setNightMode(enabled) {
+  isNightMode = enabled;
+  nightModeToggle.checked = enabled;
+  nightModeBtn.classList.toggle('night-active', enabled);
+
+  bedAssembly.remove(bedGrid);
+  bedGrid.geometry.dispose();
+
+  if (enabled) {
+    // Escena oscura con cama PEI texturada oscura + neón y luz focal en boquilla
+    const darkBg = '#050609';
+    scene.background.set(darkBg);
+    scene.fog.color.set(darkBg);
+
+    ambientLight.intensity = 0.14;
+    keyLight.intensity = 0.45;
+    keyLight.color.set('#b8d0ff');
+    fillLight.intensity = 0.25;
+
+    bedMaterial.color.set('#0b0d12');
+    bedMaterial.roughness = 0.35;
+    bedMaterial.metalness = 0.5;
+    bedNeonMaterial.opacity = 0.85;
+
+    bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x00a8ff, 0x102238);
+    bedGrid.position.y = 0.2;
+    bedAssembly.add(bedGrid);
+
+    filamentMaterial.emissive.copy(filamentMaterial.color);
+    filamentMaterial.emissiveIntensity = 0.22;
+
+    nozzleLight.intensity = 4.5;
+    nozzleLight.distance = 85;
+    nozzle.material.emissiveIntensity = 0.55;
+  } else {
+    // Restaurar modo estudio normal
+    scene.background.set(userBgColor);
+    scene.fog.color.set(userBgColor);
+
+    ambientLight.intensity = 0.42;
+    keyLight.intensity = 1.55;
+    keyLight.color.set('#ffffff');
+    fillLight.intensity = 0.55;
+
+    bedMaterial.color.set('#181a20');
+    bedMaterial.roughness = 0.65;
+    bedMaterial.metalness = 0.25;
+    bedNeonMaterial.opacity = 0.0;
+
+    bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x3a4052, 0x262a36);
+    bedGrid.position.y = 0.2;
+    bedAssembly.add(bedGrid);
+
+    filamentMaterial.emissiveIntensity = 0.0;
+
+    nozzleLight.intensity = 2.2;
+    nozzleLight.distance = 48;
+    nozzle.material.emissiveIntensity = 0.15;
+  }
+}
+
+let printedMesh = null;
+const VERTS_PER_SEGMENT = 18;
+
+// --- GENERADOR DE CORDÓN 3D CON NORMALES ---
 function appendBeadTriangles(p1, p2, radius, outPositions) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -225,14 +334,12 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
   const len = Math.hypot(dx, dy, dz);
   if (len < 1e-4) return false;
 
-  // Vector perpendicular horizontal
   const nx = -dz / len;
   const nz = dx / len;
 
   const rW = radius * 1.15;
   const rH = radius * 0.85;
 
-  // 3 vértices de sección transversal (superior, inferior-izq, inferior-der)
   const a1 = [p1.x, p1.y + rH, p1.z];
   const b1 = [p1.x + nx * rW, p1.y - rH * 0.6, p1.z + nz * rW];
   const c1 = [p1.x - nx * rW, p1.y - rH * 0.6, p1.z - nz * rW];
@@ -241,21 +348,17 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
   const b2 = [p2.x + nx * rW, p2.y - rH * 0.6, p2.z + nz * rW];
   const c2 = [p2.x - nx * rW, p2.y - rH * 0.6, p2.z - nz * rW];
 
-  // Cara 1 (arriba-derecha)
   outPositions.push(...a1, ...b1, ...b2, ...a1, ...b2, ...a2);
-  // Cara 2 (arriba-izquierda)
   outPositions.push(...c1, ...a1, ...a2, ...c1, ...a2, ...c2);
-  // Cara 3 (base)
   outPositions.push(...b1, ...c1, ...c2, ...b1, ...c2, ...b2);
 
   return true;
 }
 
-// --- CÁLCULO DE RELLENO INTERNO (INFILL RECTILÍNEO ±45°) ---
+// --- CÁLCULO DE RELLENO INTERNO (INFILL ±45°) ---
 function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
   if (densityPercent <= 0 || perimeterSegments.length < 3) return [];
 
-  // Calcular bounding box 2D de la capa
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const [p1, p2] of perimeterSegments) {
     minX = Math.min(minX, p1.x, p2.x);
@@ -264,7 +367,6 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
     maxZ = Math.max(maxZ, p1.z, p2.z);
   }
 
-  // Espaciado según densidad (entre 2.2mm al 60% y 12mm al 10%)
   const spacing = THREE.MathUtils.lerp(13.0, 2.2, (densityPercent - 10) / 50);
   const angle = (layerIndex % 2 === 0) ? Math.PI / 4 : -Math.PI / 4;
   const cos = Math.cos(angle);
@@ -275,10 +377,9 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
   const diag = Math.hypot(maxX - minX, maxZ - minZ) * 0.55;
 
   const infillSegs = [];
-  const margin = BEAD_RADIUS * 1.4; // Retraer levemente para no atravesar el perímetro
+  const margin = BEAD_RADIUS * 1.4;
 
   for (let u = -diag; u <= diag; u += spacing) {
-    // Línea de escaneo rotada en el plano XZ
     const ox = cx + u * cos;
     const oz = cz + u * sin;
     const dx = -sin;
@@ -301,7 +402,6 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
 
     hits.sort((a, b) => a - b);
 
-    // Emparejar entradas y salidas del polígono (regla par-impar)
     for (let k = 0; k + 1 < hits.length; k += 2) {
       const tStart = hits[k] + margin;
       const tEnd = hits[k + 1] - margin;
@@ -391,10 +491,7 @@ function sliceGeometry(rawGeometry) {
 
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
 
-    // 1. Ordenar perímetro exterior
     const orderedPerimeter = orderSegments(rawSegments);
-
-    // 2. Generar relleno interno (o tapas sólidas en primeras/últimas 2 capas si hay relleno)
     const effectiveDensity = (infillDensity > 0 && (l < 2 || l >= numLayers - 2))
       ? Math.max(infillDensity, 55)
       : infillDensity;
@@ -431,6 +528,7 @@ function sliceGeometry(rawGeometry) {
 
   totalSegments = toolpathPoints.length;
   currentSegmentFloat = 0;
+  printDirection = 1;
 }
 
 function intersectEdge(p1, p2, y, outPts) {
@@ -518,6 +616,8 @@ window.addEventListener('drop', (e) => {
 
 // --- SISTEMA DE BLOQUEO Y JOYSTICKS SUAVES DE CÁMARA ---
 const quickActions = document.getElementById('quick-actions');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const nightModeBtn = document.getElementById('nightModeBtn');
 const lockCameraBtn = document.getElementById('lockCameraBtn');
 const toggleCameraPadBtn = document.getElementById('toggleCameraPadBtn');
 const cameraPad = document.getElementById('camera-pad');
@@ -527,17 +627,8 @@ const autoRotateGroup = document.getElementById('autoRotateGroup');
 const autoRotateToggle = document.getElementById('autoRotateToggle');
 const rotateSpeedGroup = document.getElementById('rotateSpeedGroup');
 
-// Estado analógico suave de joysticks (-1 a 1)
-const joyInput = {
-  orbitX: 0, orbitY: 0,
-  panX: 0, panY: 0,
-  zoomVel: 0
-};
-const joySmooth = {
-  orbitX: 0, orbitY: 0,
-  panX: 0, panY: 0,
-  zoomVel: 0
-};
+const joyInput = { orbitX: 0, orbitY: 0, panX: 0, panY: 0, zoomVel: 0 };
+const joySmooth = { orbitX: 0, orbitY: 0, panX: 0, panY: 0, zoomVel: 0 };
 
 function setupJoystick(baseId, stickId, onMove) {
   const base = document.getElementById(baseId);
@@ -579,9 +670,7 @@ function setupJoystick(baseId, stickId, onMove) {
   });
 
   base.addEventListener('pointermove', (e) => {
-    if (e.pointerId === activePointer) {
-      updateStick(e.clientX, e.clientY);
-    }
+    if (e.pointerId === activePointer) updateStick(e.clientX, e.clientY);
   });
 
   base.addEventListener('pointerup', (e) => {
@@ -603,7 +692,6 @@ setupJoystick('joyPan', 'stickPan', (nx, ny) => {
   joyInput.panY = ny;
 });
 
-// Botones de zoom suaves (mantener presionado)
 const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
 
@@ -615,7 +703,6 @@ zoomOutBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput
 zoomOutBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
 zoomOutBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
 
-// Vistas predefinidas
 document.querySelectorAll('#camera-pad button[data-cam]').forEach(btn => {
   btn.addEventListener('click', () => {
     if (isCameraLocked) return;
@@ -665,22 +752,18 @@ const toggleUiBtn = document.getElementById('toggleUiBtn');
 const closeUiBtn = document.getElementById('closeUiBtn');
 
 toggleCameraPadBtn.addEventListener('click', () => {
-  uiContainer.classList.add('collapsed'); // Evitar superposición de paneles
+  uiContainer.classList.add('collapsed');
   cameraPad.classList.toggle('collapsed');
 });
 
-closeCameraPadBtn.addEventListener('click', () => {
-  cameraPad.classList.add('collapsed');
-});
+closeCameraPadBtn.addEventListener('click', () => cameraPad.classList.add('collapsed'));
 
 toggleUiBtn.addEventListener('click', () => {
-  cameraPad.classList.add('collapsed'); // Evitar superposición de paneles
+  cameraPad.classList.add('collapsed');
   uiContainer.classList.toggle('collapsed');
 });
 
-closeUiBtn.addEventListener('click', () => {
-  uiContainer.classList.add('collapsed');
-});
+closeUiBtn.addEventListener('click', () => uiContainer.classList.add('collapsed'));
 
 // --- CONTROLES DE PERSONALIZACIÓN ---
 const filamentInput = document.getElementById('filamentColor');
@@ -692,10 +775,45 @@ const chassisOpacityVal = document.getElementById('chassisOpacityVal');
 const bgInput = document.getElementById('bgColor');
 const speedSlider = document.getElementById('speedSlider');
 const speedVal = document.getElementById('speedVal');
+const nightModeToggle = document.getElementById('nightModeToggle');
+const reverseLoopToggle = document.getElementById('reverseLoopToggle');
 const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
 const rotateSpeedVal = document.getElementById('rotateSpeedVal');
 
-filamentInput.addEventListener('input', (e) => filamentMaterial.color.set(e.target.value));
+function updateSpeed(newSpeed) {
+  printSpeed = Math.max(0, newSpeed);
+  if (printSpeed > 0) {
+    lastNonZeroSpeed = printSpeed;
+    playPauseBtn.textContent = '⏸️';
+  } else {
+    playPauseBtn.textContent = '▶️';
+  }
+  speedSlider.value = printSpeed;
+  speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+}
+
+playPauseBtn.addEventListener('click', () => {
+  if (printSpeed > 0) {
+    updateSpeed(0);
+  } else {
+    updateSpeed(lastNonZeroSpeed || 1.0);
+  }
+});
+
+nightModeBtn.addEventListener('click', () => setNightMode(!isNightMode));
+nightModeToggle.addEventListener('change', (e) => setNightMode(e.target.checked));
+
+reverseLoopToggle.addEventListener('change', (e) => {
+  isReverseLoop = e.target.checked;
+  if (!isReverseLoop) printDirection = 1;
+});
+
+filamentInput.addEventListener('input', (e) => {
+  filamentMaterial.color.set(e.target.value);
+  if (isNightMode) {
+    filamentMaterial.emissive.set(e.target.value);
+  }
+});
 
 infillSlider.addEventListener('input', (e) => {
   infillDensity = parseInt(e.target.value, 10);
@@ -716,13 +834,15 @@ chassisOpacitySlider.addEventListener('input', (e) => {
 });
 
 bgInput.addEventListener('input', (e) => {
-  scene.background.set(e.target.value);
-  scene.fog.color.set(e.target.value);
+  userBgColor = e.target.value;
+  if (!isNightMode) {
+    scene.background.set(userBgColor);
+    scene.fog.color.set(userBgColor);
+  }
 });
 
 speedSlider.addEventListener('input', (e) => {
-  printSpeed = parseFloat(e.target.value);
-  speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+  updateSpeed(parseFloat(e.target.value));
 });
 
 autoRotateToggle.addEventListener('change', (e) => {
@@ -754,12 +874,21 @@ window.wallpaperPropertyListener = {
         cameraPad.classList.add('collapsed');
       }
     }
+    if (properties.nightmode !== undefined) {
+      setNightMode(properties.nightmode.value);
+    }
+    if (properties.reverseloop !== undefined) {
+      isReverseLoop = properties.reverseloop.value;
+      reverseLoopToggle.checked = isReverseLoop;
+      if (!isReverseLoop) printDirection = 1;
+    }
     if (properties.lockcamera !== undefined) {
       setCameraLocked(properties.lockcamera.value);
     }
     if (properties.filamentcolor) {
       const c = weColorToThree(properties.filamentcolor.value);
       filamentMaterial.color.copy(c);
+      if (isNightMode) filamentMaterial.emissive.copy(c);
       filamentInput.value = '#' + c.getHexString();
     }
     if (properties.infilldensity !== undefined) {
@@ -781,14 +910,15 @@ window.wallpaperPropertyListener = {
     }
     if (properties.bgcolor) {
       const c = weColorToThree(properties.bgcolor.value);
-      scene.background.copy(c);
-      scene.fog.color.copy(c);
-      bgInput.value = '#' + c.getHexString();
+      userBgColor = '#' + c.getHexString();
+      bgInput.value = userBgColor;
+      if (!isNightMode) {
+        scene.background.copy(c);
+        scene.fog.color.copy(c);
+      }
     }
-    if (properties.printspeed) {
-      printSpeed = properties.printspeed.value;
-      speedSlider.value = printSpeed;
-      speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+    if (properties.printspeed !== undefined) {
+      updateSpeed(properties.printspeed.value);
     }
     if (properties.autorotate !== undefined) {
       const enabled = properties.autorotate.value;
@@ -822,7 +952,6 @@ const clock = new THREE.Clock();
 function applySmoothJoystickCamera(dt) {
   if (isCameraLocked) return;
 
-  // Interpolación exponencial suave para que acelerar y frenar se sientan fluidos
   const smoothFactor = 1 - Math.exp(-10 * dt);
   joySmooth.orbitX += (joyInput.orbitX - joySmooth.orbitX) * smoothFactor;
   joySmooth.orbitY += (joyInput.orbitY - joySmooth.orbitY) * smoothFactor;
@@ -842,11 +971,9 @@ function applySmoothJoystickCamera(dt) {
   const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
   const spherical = new THREE.Spherical().setFromVector3(offset);
 
-  // Orbitar suave
   spherical.theta -= joySmooth.orbitX * 1.6 * dt;
   spherical.phi = THREE.MathUtils.clamp(spherical.phi + joySmooth.orbitY * 1.4 * dt, 0.15, Math.PI - 0.15);
 
-  // Zoom suave
   spherical.radius = THREE.MathUtils.clamp(
     spherical.radius * (1 + joySmooth.zoomVel * 1.1 * dt),
     controls.minDistance,
@@ -856,7 +983,6 @@ function applySmoothJoystickCamera(dt) {
   offset.setFromSpherical(spherical);
   camera.position.copy(controls.target).add(offset);
 
-  // Desplazamiento (Pan) suave
   const forward = new THREE.Vector3();
   camera.getWorldDirection(forward);
   const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
@@ -876,18 +1002,26 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
 
   if (totalSegments > 0 && printedMesh) {
-    const segmentsPerSecond = Math.max(45, totalSegments * 0.035) * printSpeed;
-    currentSegmentFloat += segmentsPerSecond * dt;
+    // Si printSpeed === 0, no se avanza y queda congelado en su posición exacta
+    if (printSpeed > 0) {
+      const segmentsPerSecond = Math.max(45, totalSegments * 0.035) * printSpeed;
+      currentSegmentFloat += segmentsPerSecond * dt * printDirection;
 
-    if (currentSegmentFloat >= totalSegments) {
-      if (isLooping) {
+      if (currentSegmentFloat >= totalSegments) {
+        if (isReverseLoop) {
+          currentSegmentFloat = totalSegments - 0.001;
+          printDirection = -1;
+        } else {
+          currentSegmentFloat = 0;
+          printDirection = 1;
+        }
+      } else if (currentSegmentFloat < 0) {
         currentSegmentFloat = 0;
-      } else {
-        currentSegmentFloat = totalSegments - 1;
+        printDirection = 1;
       }
     }
 
-    const segIdx = Math.floor(currentSegmentFloat);
+    const segIdx = Math.max(0, Math.min(totalSegments - 1, Math.floor(currentSegmentFloat)));
     const frac = currentSegmentFloat - segIdx;
     const currentSeg = toolpathPoints[segIdx];
 
@@ -903,7 +1037,8 @@ function animate() {
 
     const totalLayers = layerStartIndices.length;
     const pct = Math.floor((segIdx / totalSegments) * 100);
-    layerInfoEl.textContent = `Capa: ${currentSeg.layer} / ${totalLayers}`;
+    const dirSymbol = printDirection === -1 ? ' ⏪' : '';
+    layerInfoEl.textContent = `Capa: ${currentSeg.layer} / ${totalLayers}${dirSymbol}`;
     progressInfoEl.textContent = `${pct}%`;
   }
 
