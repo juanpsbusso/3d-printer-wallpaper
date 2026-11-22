@@ -1,6 +1,6 @@
 {
   "title": "Simulador Impresión 3D",
-  "description": "Simulador interactivo de impresión 3D CoreXY con sombreado 3D por capas, relleno configurable, joysticks de cámara y carga de .STL.",
+  "description": "Simulador interactivo de impresión 3D CoreXY con modo nocturno, bucle reversible, sombreado 3D por capas y joysticks de cámara.",
   "type": "web",
   "file": "index.html",
   "general": {
@@ -12,20 +12,32 @@
         "type": "bool",
         "value": true
       },
-      "lockcamera": {
+      "nightmode": {
         "order": 2,
+        "text": "Modo Nocturno",
+        "type": "bool",
+        "value": false
+      },
+      "reverseloop": {
+        "order": 3,
+        "text": "Bucle Ida y Vuelta (Reversa)",
+        "type": "bool",
+        "value": true
+      },
+      "lockcamera": {
+        "order": 4,
         "text": "Bloquear posición de cámara",
         "type": "bool",
         "value": false
       },
       "filamentcolor": {
-        "order": 3,
+        "order": 5,
         "text": "Color del Filamento",
         "type": "color",
         "value": "0 0.66 1"
       },
       "infilldensity": {
-        "order": 4,
+        "order": 6,
         "text": "Densidad de Relleno (%)",
         "type": "slider",
         "min": 0,
@@ -33,41 +45,41 @@
         "value": 20
       },
       "printercolor": {
-        "order": 5,
+        "order": 7,
         "text": "Color del Chasis",
         "type": "color",
         "value": "0.14 0.15 0.19"
       },
       "chassisopacity": {
-        "order": 6,
+        "order": 8,
         "text": "Opacidad del Chasis",
         "type": "slider",
-        "min": 0.05,
+        "min": 0.0,
         "max": 1.0,
         "value": 0.35
       },
       "bgcolor": {
-        "order": 7,
+        "order": 9,
         "text": "Color de Fondo",
         "type": "color",
         "value": "0.05 0.06 0.08"
       },
       "printspeed": {
-        "order": 8,
-        "text": "Velocidad de Impresión",
+        "order": 10,
+        "text": "Velocidad de Impresión (0 = Pausa)",
         "type": "slider",
-        "min": 0.2,
+        "min": 0.0,
         "max": 5.0,
         "value": 1.0
       },
       "autorotate": {
-        "order": 9,
+        "order": 11,
         "text": "Rotación Automática",
         "type": "bool",
         "value": true
       },
       "rotatespeed": {
-        "order": 10,
+        "order": 12,
         "text": "Velocidad de Rotación",
         "type": "slider",
         "min": 0.1,
@@ -75,7 +87,7 @@
         "value": 0.5
       },
       "modelfile": {
-        "order": 11,
+        "order": 13,
         "text": "Archivo .STL Personalizado",
         "type": "file",
         "fileType": "stl"
