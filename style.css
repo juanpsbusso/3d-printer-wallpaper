@@ -25,7 +25,7 @@ html, body {
   position: fixed;
   top: 16px;
   right: 16px;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   gap: 8px;
 }
@@ -39,7 +39,7 @@ html, body {
   height: 36px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(18, 20, 28, 0.75);
+  background: rgba(18, 20, 28, 0.78);
   backdrop-filter: blur(8px);
   color: #fff;
   font-size: 15px;
@@ -47,7 +47,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.4;
+  opacity: 0.45;
   transition: opacity 0.25s ease, transform 0.2s ease, background 0.2s ease;
 }
 
@@ -63,18 +63,18 @@ html, body {
   border-color: rgba(255, 120, 110, 0.5);
 }
 
-/* Pad de movimientos de cámara (abajo a la izquierda) */
+/* Panel de Joysticks de Cámara (zona superior derecha, despejado de barra de tareas) */
 #camera-pad {
   position: fixed;
-  bottom: 20px;
-  left: 20px;
+  top: 62px;
+  right: 16px;
   z-index: 25;
   background: rgba(18, 20, 28, 0.88);
   backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   padding: 14px;
-  width: 240px;
+  width: 245px;
   color: #e4e6eb;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
   transition: opacity 0.25s ease, transform 0.25s ease;
@@ -83,10 +83,10 @@ html, body {
 #camera-pad.collapsed {
   opacity: 0;
   pointer-events: none;
-  transform: translateY(10px) scale(0.97);
+  transform: translateY(-8px) scale(0.97);
 }
 
-#camera-pad.pad-locked .pad-grid,
+#camera-pad.pad-locked .joysticks-row,
 #camera-pad.pad-locked .pad-zoom,
 #camera-pad.pad-locked .pad-presets {
   opacity: 0.35;
@@ -99,7 +99,7 @@ html, body {
   align-items: center;
   font-size: 12px;
   font-weight: 600;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   color: #fff;
 }
 
@@ -118,18 +118,18 @@ html, body {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.pad-grid {
+/* Joysticks analógicos virtuales */
+.joysticks-row {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  justify-content: space-around;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.pad-section {
+.joy-wrapper {
   display: flex;
   flex-direction: column;
   align-items: center;
-  flex: 1;
 }
 
 .pad-label {
@@ -140,37 +140,34 @@ html, body {
   letter-spacing: 0.5px;
 }
 
-.dpad {
+.joystick-base {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.11) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
 }
 
-.dpad-row {
-  display: flex;
-  gap: 3px;
+.joystick-base:active {
+  cursor: grabbing;
+  border-color: rgba(43, 89, 255, 0.7);
 }
 
-.dpad button {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.06);
-  color: #e4e6eb;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.dpad button:hover {
-  background: #2b59ff;
-  color: #fff;
-}
-
-.dpad button:active {
-  transform: scale(0.93);
+.joystick-stick {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #3b6aff, #1d44cc);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255,255,255,0.35);
+  position: absolute;
+  pointer-events: none;
+  transform: translate(0px, 0px);
 }
 
 .pad-zoom, .pad-presets {
@@ -199,9 +196,9 @@ html, body {
 /* Panel principal de configuración */
 #ui-container {
   position: fixed;
-  top: 60px;
+  top: 62px;
   right: 16px;
-  z-index: 25;
+  z-index: 26;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
@@ -217,7 +214,7 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   padding: 16px;
-  width: 260px;
+  width: 265px;
   color: #e4e6eb;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 }
