@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Printer Simulator - Live Wallpaper</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="canvas3d"></canvas>
+
+  <!-- UI flotante discreta (aparece al mover el mouse) -->
+  <div id="ui-container" class="ui-hidden">
+    <div class="panel">
+      <h3>Simulador Impresión 3D</h3>
+
+      <label class="file-btn">
+        📂 Cargar archivo .STL
+        <input type="file" id="stlInput" accept=".stl" hidden />
+      </label>
+
+      <div class="control-group">
+        <label for="filamentColor">Filamento</label>
+        <input type="color" id="filamentColor" value="#00a8ff" />
+      </div>
+
+      <div class="control-group">
+        <label for="printerColor">Chasis Impresora</label>
+        <input type="color" id="printerColor" value="#242730" />
+      </div>
+
+      <div class="control-group">
+        <label for="bgColor">Fondo</label>
+        <input type="color" id="bgColor" value="#0d0f14" />
+      </div>
+
+      <div class="control-group">
+        <label for="speedSlider">Velocidad: <span id="speedVal">1.0x</span></label>
+        <input type="range" id="speedSlider" min="0.2" max="5.0" step="0.2" value="1.0" />
+      </div>
+
+      <div class="status-bar">
+        <span id="layerInfo">Capa: 0 / 0</span>
+        <span id="progressInfo">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
