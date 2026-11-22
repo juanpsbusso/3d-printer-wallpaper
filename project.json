@@ -86,11 +86,10 @@
         "max": 3.0,
         "value": 0.5
       },
-      "modelfile": {
+      "browsestl": {
         "order": 13,
-        "text": "Custom .STL Path (or use ⚙️ in wallpaper)",
-        "type": "textinput",
-        "value": ""
+        "text": "Browse .STL File...",
+        "type": "button"
       }
     }
   }
