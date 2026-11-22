@@ -17,11 +17,65 @@
 <body>
   <canvas id="canvas3d"></canvas>
 
-  <!-- Botón discreto para mostrar/ocultar el panel -->
-  <button id="toggleUiBtn" title="Mostrar/Ocultar configuración">⚙️</button>
+  <!-- Botones flotantes minimalistas -->
+  <div id="quick-actions">
+    <button id="lockCameraBtn" class="icon-btn" title="Bloquear / Desbloquear cámara">🔓</button>
+    <button id="toggleCameraPadBtn" class="icon-btn" title="Controles de cámara">🎥</button>
+    <button id="toggleUiBtn" class="icon-btn" title="Configuración">⚙️</button>
+  </div>
 
-  <!-- UI flotante -->
-  <div id="ui-container">
+  <!-- Pad de Movimientos de Cámara (esquina inferior izquierda) -->
+  <div id="camera-pad" class="collapsed">
+    <div class="pad-header">
+      <span>Control de Cámara</span>
+      <button id="closeCameraPadBtn" title="Cerrar">✕</button>
+    </div>
+
+    <div class="pad-grid">
+      <!-- Orbitar -->
+      <div class="pad-section">
+        <span class="pad-label">Rotar</span>
+        <div class="dpad">
+          <button data-cam="orbit-up" title="Rotar arriba">▲</button>
+          <div class="dpad-row">
+            <button data-cam="orbit-left" title="Rotar izquierda">◀</button>
+            <button data-cam="reset" title="Vista Isométrica">⌂</button>
+            <button data-cam="orbit-right" title="Rotar derecha">▶</button>
+          </div>
+          <button data-cam="orbit-down" title="Rotar abajo">▼</button>
+        </div>
+      </div>
+
+      <!-- Desplazar (Pan) -->
+      <div class="pad-section">
+        <span class="pad-label">Mover (Pan)</span>
+        <div class="dpad">
+          <button data-cam="pan-up" title="Subir cámara">▲</button>
+          <div class="dpad-row">
+            <button data-cam="pan-left" title="Mover izquierda">◀</button>
+            <button data-cam="pan-center" title="Centrar pieza">◎</button>
+            <button data-cam="pan-right" title="Mover derecha">▶</button>
+          </div>
+          <button data-cam="pan-down" title="Bajar cámara">▼</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Zoom y Vistas Rápidas -->
+    <div class="pad-zoom">
+      <button data-cam="zoom-in">➕ Acercar</button>
+      <button data-cam="zoom-out">➖ Alejar</button>
+    </div>
+
+    <div class="pad-presets">
+      <button data-cam="view-front">Frente</button>
+      <button data-cam="view-iso">3D</button>
+      <button data-cam="view-top">Arriba</button>
+    </div>
+  </div>
+
+  <!-- Panel principal de configuración -->
+  <div id="ui-container" class="collapsed">
     <div class="panel">
       <div class="panel-header">
         <h3>Simulador Impresión 3D</h3>
@@ -59,6 +113,11 @@
       </div>
 
       <div class="control-group">
+        <label for="lockCameraToggle">Bloquear Cámara</label>
+        <input type="checkbox" id="lockCameraToggle" />
+      </div>
+
+      <div class="control-group" id="autoRotateGroup">
         <label for="autoRotateToggle">Rotación Cámara</label>
         <input type="checkbox" id="autoRotateToggle" checked />
       </div>
