@@ -20,96 +20,79 @@ html, body {
   touch-action: none;
 }
 
-/* Barra de botones rápidos arriba a la derecha */
-#quick-actions {
+/* Single discreet gear button */
+.gear-btn {
   position: fixed;
   top: 16px;
   right: 16px;
   z-index: 30;
-  display: flex;
-  gap: 8px;
-}
-
-#quick-actions.hidden-completely {
-  display: none;
-}
-
-.icon-btn {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(18, 20, 28, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(18, 20, 28, 0.65);
   backdrop-filter: blur(8px);
   color: #fff;
-  font-size: 15px;
+  font-size: 16px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.45;
+  opacity: 0.35;
   transition: opacity 0.25s ease, transform 0.2s ease, background 0.2s ease;
 }
 
-.icon-btn:hover {
+.gear-btn:hover,
+.gear-btn.active {
   opacity: 1;
   background: rgba(43, 89, 255, 0.85);
   transform: scale(1.06);
 }
 
-.icon-btn.locked-active {
-  opacity: 0.95;
-  background: rgba(231, 76, 60, 0.85);
-  border-color: rgba(255, 120, 110, 0.5);
+.gear-btn.hidden-completely {
+  display: none;
 }
 
-.icon-btn.night-active {
-  opacity: 0.95;
-  background: rgba(110, 65, 226, 0.85);
-  border-color: rgba(170, 130, 255, 0.5);
-}
-
-/* Panel de Joysticks de Cámara */
-#camera-pad {
+/* Unified Panel */
+#ui-container {
   position: fixed;
-  top: 62px;
+  top: 60px;
   right: 16px;
-  z-index: 25;
-  background: rgba(18, 20, 28, 0.88);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  padding: 14px;
-  width: 245px;
-  color: #e4e6eb;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 26;
+  transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
-#camera-pad.collapsed {
+#ui-container.collapsed {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-8px) scale(0.97);
 }
 
-#camera-pad.pad-locked .joysticks-row,
-#camera-pad.pad-locked .pad-zoom,
-#camera-pad.pad-locked .pad-presets {
-  opacity: 0.35;
-  pointer-events: none;
+.panel {
+  background: rgba(18, 20, 28, 0.9);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 15px;
+  width: 272px;
+  color: #e4e6eb;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
 }
 
-.pad-header {
+.panel-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #fff;
+  justify-content: space-between;
+  margin-bottom: 10px;
 }
 
-#closeCameraPadBtn, #closeUiBtn {
+.panel-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+#closeUiBtn {
   background: transparent;
   border: none;
   color: #9ba1b0;
@@ -119,16 +102,143 @@ html, body {
   border-radius: 4px;
 }
 
-#closeCameraPadBtn:hover, #closeUiBtn:hover {
+#closeUiBtn:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Quick action buttons inside panel */
+.quick-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.quick-bar button {
+  flex: 1;
+  padding: 6px 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e4e6eb;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.quick-bar button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.quick-bar button.night-active {
+  background: rgba(110, 65, 226, 0.75);
+  border-color: rgba(170, 130, 255, 0.5);
+  color: #fff;
+}
+
+.quick-bar button.locked-active {
+  background: rgba(231, 76, 60, 0.75);
+  border-color: rgba(255, 120, 110, 0.5);
+  color: #fff;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ba1b0;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.tab-btn.active {
+  background: #2b59ff;
+  color: #fff;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+.file-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: #2b59ff;
+  color: #fff;
+  text-align: center;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: background 0.2s;
+}
+
+.file-btn:hover {
+  background: #1e46d6;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+  font-size: 12px;
+  transition: opacity 0.2s ease;
+}
+
+.control-group.disabled,
+#camera-controls-wrapper.pad-locked {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.control-group input[type="color"] {
+  -webkit-appearance: none;
+  border: none;
+  width: 28px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
+}
+
+.control-group input[type="range"] {
+  width: 95px;
+  accent-color: #2b59ff;
+}
+
+.control-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2b59ff;
+  cursor: pointer;
+}
+
+/* Virtual Analog Joysticks */
 .joysticks-row {
   display: flex;
   justify-content: space-around;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .joy-wrapper {
@@ -140,7 +250,7 @@ html, body {
 .pad-label {
   font-size: 10px;
   color: #9ba1b0;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -196,100 +306,6 @@ html, body {
 .pad-zoom button:hover, .pad-presets button:hover {
   background: #2b59ff;
   color: #fff;
-}
-
-/* Panel principal de configuración */
-#ui-container {
-  position: fixed;
-  top: 62px;
-  right: 16px;
-  z-index: 26;
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-
-#ui-container.collapsed {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-8px) scale(0.97);
-}
-
-.panel {
-  background: rgba(18, 20, 28, 0.88);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  padding: 16px;
-  width: 268px;
-  color: #e4e6eb;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.panel-header h3 {
-  font-size: 14px;
-  font-weight: 600;
-  color: #ffffff;
-}
-
-.file-btn {
-  display: block;
-  width: 100%;
-  padding: 9px 12px;
-  background: #2b59ff;
-  color: #fff;
-  text-align: center;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  margin-bottom: 12px;
-  transition: background 0.2s;
-}
-
-.file-btn:hover {
-  background: #1e46d6;
-}
-
-.control-group {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 9px;
-  font-size: 12px;
-  transition: opacity 0.2s ease;
-}
-
-.control-group.disabled {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.control-group input[type="color"] {
-  -webkit-appearance: none;
-  border: none;
-  width: 28px;
-  height: 22px;
-  border-radius: 4px;
-  cursor: pointer;
-  background: none;
-}
-
-.control-group input[type="range"] {
-  width: 95px;
-  accent-color: #2b59ff;
-}
-
-.control-group input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: #2b59ff;
-  cursor: pointer;
 }
 
 .status-bar {
