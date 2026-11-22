@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
-// --- CONFIGURACIÓN GENERAL ---
+// --- GENERAL CONFIGURATION ---
 const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
@@ -16,13 +16,13 @@ let totalSegments = 0;
 let layerStartIndices = [];
 let toolpathPoints = [];
 let isReverseLoop = true;
-let printDirection = 1; // 1 = imprimiendo hacia adelante, -1 = borrando en reversa
+let printDirection = 1;
 let isCameraLocked = false;
 let isNightMode = false;
 let currentRawGeometry = null;
 let userBgColor = '#0d0f14';
 
-// --- ESCENA, CÁMARA Y RENDERER ---
+// --- SCENE, CAMERA & RENDERER ---
 const canvas = document.getElementById('canvas3d');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -37,7 +37,6 @@ scene.background = new THREE.Color(userBgColor);
 scene.fog = new THREE.FogExp2(userBgColor, 0.0015);
 
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
-camera.position.set(220, 185, 240);
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -50,13 +49,12 @@ controls.zoomSpeed = 0.85;
 controls.panSpeed = 0.7;
 controls.minDistance = 75;
 controls.maxDistance = 650;
-controls.target.set(0, 65, 0);
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.5;
 
 canvas.addEventListener('pointerdown', () => window.focus());
 
-// --- ILUMINACIÓN ---
+// --- LIGHTING ---
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.42);
 scene.add(ambientLight);
 
@@ -76,7 +74,7 @@ const bottomBounceLight = new THREE.DirectionalLight(0x445577, 0.3);
 bottomBounceLight.position.set(0, -100, 50);
 scene.add(bottomBounceLight);
 
-// --- MATERIALES DINÁMICOS ---
+// --- MATERIALS ---
 const chassisMaterial = new THREE.MeshStandardMaterial({
   color: '#242730',
   roughness: 0.45,
@@ -115,9 +113,9 @@ const filamentMaterial = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.0
 });
 
-// --- CONSTRUCCIÓN DE LA IMPRESORA COREXY ---
+// --- COREXY PRINTER ASSEMBLY ---
 const printerGroup = new THREE.Group();
-const frameStructureGroup = new THREE.Group(); // Agrupa marco y guías para ocultarlos a 0%
+const frameStructureGroup = new THREE.Group();
 printerGroup.add(frameStructureGroup);
 scene.add(printerGroup);
 
@@ -166,14 +164,13 @@ function buildPrinter() {
 
 buildPrinter();
 
-// Grupo Cama Caliente
+// Heated Bed Assembly
 const bedAssembly = new THREE.Group();
 const bedPlate = new THREE.Mesh(new THREE.BoxGeometry(BED_SIZE, 4, BED_SIZE), bedMaterial);
 bedPlate.position.y = -2;
 bedPlate.receiveShadow = true;
 bedAssembly.add(bedPlate);
 
-// Borde LED neón alrededor de la cama (se enciende en Modo Nocturno)
 const neonEdgesGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(BED_SIZE + 1.5, 4.2, BED_SIZE + 1.5));
 const bedNeonOutline = new THREE.LineSegments(neonEdgesGeo, bedNeonMaterial);
 bedNeonOutline.position.y = -2;
@@ -184,8 +181,11 @@ bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
 printerGroup.add(bedAssembly);
 
-// Puente móvil en Z
+// Gantry Bridge
 const topY = BUILD_HEIGHT + 42;
+const nozzleTipHeight = topY - 20;
+bedAssembly.position.y = nozzleTipHeight;
+
 const gantryBridge = new THREE.Group();
 gantryBridge.position.y = topY;
 const xRail = new THREE.Mesh(
@@ -195,7 +195,7 @@ const xRail = new THREE.Mesh(
 gantryBridge.add(xRail);
 printerGroup.add(gantryBridge);
 
-// Cabezal Extrusor (Hotend)
+// Extruder Toolhead
 const toolhead = new THREE.Group();
 const carriage = new THREE.Mesh(new THREE.BoxGeometry(22, 24, 22), chassisMaterial);
 carriage.position.y = 8;
@@ -212,7 +212,6 @@ const heatsink = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 14, 16), heatsi
 heatsink.position.y = -6;
 toolhead.add(heatsink);
 
-// La boquilla (Nozzle) siempre permanece visible incluso con chasis al 0%
 const nozzle = new THREE.Mesh(
   new THREE.ConeGeometry(3.2, 7, 16).rotateX(Math.PI),
   new THREE.MeshStandardMaterial({
@@ -232,7 +231,28 @@ toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Control de transparencia total del chasis (0% deja solo la boquilla visible)
+// Set initial camera framing centered on the print bed
+function applyCameraPreset(view) {
+  const bedSurfaceY = bedAssembly.position.y;
+  const focusY = bedSurfaceY + 28; // Centers print bed + printed model
+
+  if (view === 'view-front') {
+    controls.target.set(0, focusY, 0);
+    camera.position.set(0, focusY + 12, 275);
+  } else if (view === 'view-top') {
+    controls.target.set(0, bedSurfaceY + 15, 0);
+    camera.position.set(0, bedSurfaceY + 290, 25);
+  } else {
+    // 'view-iso' (3D)
+    controls.target.set(0, focusY, 0);
+    camera.position.set(205, focusY + 105, 225);
+  }
+  controls.update();
+}
+
+applyCameraPreset('view-iso');
+
+// Frame transparency control
 function setChassisOpacity(alpha) {
   const val = Math.max(0.0, Math.min(1.0, alpha));
 
@@ -261,7 +281,7 @@ function setChassisOpacity(alpha) {
   }
 }
 
-// --- MODO NOCTURNO ---
+// --- NIGHT MODE ---
 function setNightMode(enabled) {
   isNightMode = enabled;
   nightModeToggle.checked = enabled;
@@ -271,7 +291,6 @@ function setNightMode(enabled) {
   bedGrid.geometry.dispose();
 
   if (enabled) {
-    // Escena oscura con cama PEI texturada oscura + neón y luz focal en boquilla
     const darkBg = '#050609';
     scene.background.set(darkBg);
     scene.fog.color.set(darkBg);
@@ -297,7 +316,6 @@ function setNightMode(enabled) {
     nozzleLight.distance = 85;
     nozzle.material.emissiveIntensity = 0.55;
   } else {
-    // Restaurar modo estudio normal
     scene.background.set(userBgColor);
     scene.fog.color.set(userBgColor);
 
@@ -326,7 +344,7 @@ function setNightMode(enabled) {
 let printedMesh = null;
 const VERTS_PER_SEGMENT = 18;
 
-// --- GENERADOR DE CORDÓN 3D CON NORMALES ---
+// --- 3D EXTRUSION BEAD GENERATOR ---
 function appendBeadTriangles(p1, p2, radius, outPositions) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -355,7 +373,7 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
   return true;
 }
 
-// --- CÁLCULO DE RELLENO INTERNO (INFILL ±45°) ---
+// --- RECTILINEAR INFILL GENERATOR (±45°) ---
 function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
   if (densityPercent <= 0 || perimeterSegments.length < 3) return [];
 
@@ -417,7 +435,7 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
   return infillSegs;
 }
 
-// --- SLICER GEOMÉTRICO EN JAVASCRIPT ---
+// --- GEOMETRIC SLICER ---
 function sliceGeometry(rawGeometry) {
   currentRawGeometry = rawGeometry;
   const geo = rawGeometry.clone();
@@ -587,7 +605,7 @@ function loadDefaultModel() {
 
 loadDefaultModel();
 
-// --- CARGA DE ARCHIVOS .STL ---
+// --- STL FILE LOADING ---
 const stlLoader = new STLLoader();
 
 function loadSTLFromBuffer(buffer) {
@@ -614,14 +632,35 @@ window.addEventListener('drop', (e) => {
   }
 });
 
-// --- SISTEMA DE BLOQUEO Y JOYSTICKS SUAVES DE CÁMARA ---
-const quickActions = document.getElementById('quick-actions');
+// --- UI TABS & PANEL TOGGLE ---
+const uiContainer = document.getElementById('ui-container');
+const toggleUiBtn = document.getElementById('toggleUiBtn');
+const closeUiBtn = document.getElementById('closeUiBtn');
+
+toggleUiBtn.addEventListener('click', () => {
+  const isCollapsed = uiContainer.classList.toggle('collapsed');
+  toggleUiBtn.classList.toggle('active', !isCollapsed);
+});
+
+closeUiBtn.addEventListener('click', () => {
+  uiContainer.classList.add('collapsed');
+  toggleUiBtn.classList.remove('active');
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.getAttribute('data-tab')).classList.add('active');
+  });
+});
+
+// --- CAMERA LOCK & ANALOG JOYSTICKS ---
 const playPauseBtn = document.getElementById('playPauseBtn');
 const nightModeBtn = document.getElementById('nightModeBtn');
 const lockCameraBtn = document.getElementById('lockCameraBtn');
-const toggleCameraPadBtn = document.getElementById('toggleCameraPadBtn');
-const cameraPad = document.getElementById('camera-pad');
-const closeCameraPadBtn = document.getElementById('closeCameraPadBtn');
+const cameraControlsWrapper = document.getElementById('camera-controls-wrapper');
 const lockCameraToggle = document.getElementById('lockCameraToggle');
 const autoRotateGroup = document.getElementById('autoRotateGroup');
 const autoRotateToggle = document.getElementById('autoRotateToggle');
@@ -703,21 +742,10 @@ zoomOutBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput
 zoomOutBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
 zoomOutBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
 
-document.querySelectorAll('#camera-pad button[data-cam]').forEach(btn => {
+document.querySelectorAll('#tab-camera button[data-cam]').forEach(btn => {
   btn.addEventListener('click', () => {
     if (isCameraLocked) return;
-    const view = btn.getAttribute('data-cam');
-    if (view === 'view-front') {
-      controls.target.set(0, 75, 0);
-      camera.position.set(0, 85, 310);
-    } else if (view === 'view-iso') {
-      controls.target.set(0, 65, 0);
-      camera.position.set(220, 185, 240);
-    } else if (view === 'view-top') {
-      controls.target.set(0, 50, 0);
-      camera.position.set(0, 340, 25);
-    }
-    controls.update();
+    applyCameraPreset(btn.getAttribute('data-cam'));
   });
 });
 
@@ -729,16 +757,16 @@ function setCameraLocked(locked) {
   if (locked) {
     controls.autoRotate = false;
     joyInput.orbitX = joyInput.orbitY = joyInput.panX = joyInput.panY = joyInput.zoomVel = 0;
-    lockCameraBtn.textContent = '🔒';
+    lockCameraBtn.textContent = '🔒 Locked';
     lockCameraBtn.classList.add('locked-active');
-    cameraPad.classList.add('pad-locked');
+    cameraControlsWrapper.classList.add('pad-locked');
     autoRotateGroup.classList.add('disabled');
     rotateSpeedGroup.classList.add('disabled');
   } else {
     controls.autoRotate = autoRotateToggle.checked;
-    lockCameraBtn.textContent = '🔓';
+    lockCameraBtn.textContent = '🔓 Free';
     lockCameraBtn.classList.remove('locked-active');
-    cameraPad.classList.remove('pad-locked');
+    cameraControlsWrapper.classList.remove('pad-locked');
     autoRotateGroup.classList.remove('disabled');
     rotateSpeedGroup.classList.toggle('disabled', !autoRotateToggle.checked);
   }
@@ -747,25 +775,7 @@ function setCameraLocked(locked) {
 lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked));
 lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked));
 
-const uiContainer = document.getElementById('ui-container');
-const toggleUiBtn = document.getElementById('toggleUiBtn');
-const closeUiBtn = document.getElementById('closeUiBtn');
-
-toggleCameraPadBtn.addEventListener('click', () => {
-  uiContainer.classList.add('collapsed');
-  cameraPad.classList.toggle('collapsed');
-});
-
-closeCameraPadBtn.addEventListener('click', () => cameraPad.classList.add('collapsed'));
-
-toggleUiBtn.addEventListener('click', () => {
-  cameraPad.classList.add('collapsed');
-  uiContainer.classList.toggle('collapsed');
-});
-
-closeUiBtn.addEventListener('click', () => uiContainer.classList.add('collapsed'));
-
-// --- CONTROLES DE PERSONALIZACIÓN ---
+// --- CUSTOMIZATION CONTROLS ---
 const filamentInput = document.getElementById('filamentColor');
 const infillSlider = document.getElementById('infillSlider');
 const infillVal = document.getElementById('infillVal');
@@ -784,9 +794,9 @@ function updateSpeed(newSpeed) {
   printSpeed = Math.max(0, newSpeed);
   if (printSpeed > 0) {
     lastNonZeroSpeed = printSpeed;
-    playPauseBtn.textContent = '⏸️';
+    playPauseBtn.textContent = '⏸️ Pause';
   } else {
-    playPauseBtn.textContent = '▶️';
+    playPauseBtn.textContent = '▶️ Resume';
   }
   speedSlider.value = printSpeed;
   speedVal.textContent = `${printSpeed.toFixed(1)}x`;
@@ -858,7 +868,7 @@ rotateSpeedSlider.addEventListener('input', (e) => {
   rotateSpeedVal.textContent = val.toFixed(1);
 });
 
-// --- INTEGRACIÓN NATIVA CON WALLPAPER ENGINE ---
+// --- WALLPAPER ENGINE INTEGRATION ---
 function weColorToThree(weColorString) {
   const rgb = weColorString.split(' ').map(Number);
   return new THREE.Color(rgb[0], rgb[1], rgb[2]);
@@ -868,10 +878,10 @@ window.wallpaperPropertyListener = {
   applyUserProperties: function (properties) {
     if (properties.showwebmenu !== undefined) {
       const show = properties.showwebmenu.value;
-      quickActions.classList.toggle('hidden-completely', !show);
+      toggleUiBtn.classList.toggle('hidden-completely', !show);
       if (!show) {
         uiContainer.classList.add('collapsed');
-        cameraPad.classList.add('collapsed');
+        toggleUiBtn.classList.remove('active');
       }
     }
     if (properties.nightmode !== undefined) {
@@ -937,15 +947,14 @@ window.wallpaperPropertyListener = {
       fetch(filePath)
         .then(res => res.arrayBuffer())
         .then(buf => loadSTLFromBuffer(buf))
-        .catch(err => console.error('Error cargando STL desde WE:', err));
+        .catch(err => console.error('Error loading STL from WE:', err));
     }
   }
 };
 
-// --- LOOP DE ANIMACIÓN ---
+// --- ANIMATION LOOP ---
 const layerInfoEl = document.getElementById('layerInfo');
 const progressInfoEl = document.getElementById('progressInfo');
-const nozzleTipHeight = topY - 20;
 
 const clock = new THREE.Clock();
 
@@ -1002,7 +1011,6 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
 
   if (totalSegments > 0 && printedMesh) {
-    // Si printSpeed === 0, no se avanza y queda congelado en su posición exacta
     if (printSpeed > 0) {
       const segmentsPerSecond = Math.max(45, totalSegments * 0.035) * printSpeed;
       currentSegmentFloat += segmentsPerSecond * dt * printDirection;
@@ -1038,7 +1046,7 @@ function animate() {
     const totalLayers = layerStartIndices.length;
     const pct = Math.floor((segIdx / totalSegments) * 100);
     const dirSymbol = printDirection === -1 ? ' ⏪' : '';
-    layerInfoEl.textContent = `Capa: ${currentSeg.layer} / ${totalLayers}${dirSymbol}`;
+    layerInfoEl.textContent = `Layer: ${currentSeg.layer} / ${totalLayers}${dirSymbol}`;
     progressInfoEl.textContent = `${pct}%`;
   }
 
