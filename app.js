@@ -5,13 +5,13 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 // --- CONFIGURACIÓN GENERAL ---
 const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
-const LAYER_HEIGHT = 0.45; // Altura de capa visual en mm
+const LAYER_HEIGHT = 0.45;
 
 let printSpeed = 1.0;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
-let toolpathPoints = []; // [{start, end, layer}]
+let toolpathPoints = [];
 let isLooping = true;
 
 // --- ESCENA, CÁMARA Y RENDERER ---
@@ -29,12 +29,23 @@ scene.fog = new THREE.FogExp2('#0d0f14', 0.0016);
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
 camera.position.set(220, 190, 240);
 
-const controls = new OrbitControls(camera, renderer.domElement);
+// Configuración de OrbitControls compatible con Wallpaper Engine y escritorio
+const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
-controls.dampingFactor = 0.05;
+controls.dampingFactor = 0.06;
+controls.enablePan = true;
+controls.enableZoom = true;
+controls.rotateSpeed = 0.8;
+controls.zoomSpeed = 1.0;
+controls.panSpeed = 0.8;
 controls.target.set(0, 65, 0);
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.6;
+
+// Asegurar captura de foco al hacer clic en Wallpaper Engine
+canvas.addEventListener('pointerdown', () => {
+  window.focus();
+});
 
 // --- ILUMINACIÓN ---
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
@@ -55,13 +66,18 @@ scene.add(rimLight);
 const chassisMaterial = new THREE.MeshStandardMaterial({
   color: '#242730',
   roughness: 0.45,
-  metalness: 0.65
+  metalness: 0.65,
+  transparent: true,
+  opacity: 1.0,
+  depthWrite: true
 });
 
 const railMaterial = new THREE.MeshStandardMaterial({
   color: '#9aa0ac',
   roughness: 0.25,
-  metalness: 0.85
+  metalness: 0.85,
+  transparent: true,
+  opacity: 1.0
 });
 
 const bedMaterial = new THREE.MeshStandardMaterial({
@@ -75,6 +91,18 @@ const filamentMaterial = new THREE.LineBasicMaterial({
   linewidth: 2
 });
 
+// Función para actualizar transparencia del chasis y guías
+function setChassisOpacity(alpha) {
+  const val = Math.max(0.05, Math.min(1.0, alpha));
+  chassisMaterial.opacity = val;
+  chassisMaterial.depthWrite = val > 0.85;
+  chassisMaterial.needsUpdate = true;
+
+  railMaterial.opacity = Math.max(0.25, val);
+  railMaterial.depthWrite = val > 0.85;
+  railMaterial.needsUpdate = true;
+}
+
 // --- CONSTRUCCIÓN DE LA IMPRESORA COREXY ---
 const printerGroup = new THREE.Group();
 scene.add(printerGroup);
@@ -84,7 +112,6 @@ function buildPrinter() {
   const frameH = BUILD_HEIGHT + 60;
   const pillarSize = 10;
 
-  // 4 pilares verticales + marco superior e inferior
   const pillarGeo = new THREE.BoxGeometry(pillarSize, frameH, pillarSize);
   const offsets = [
     [-frameW / 2, frameH / 2, -frameW / 2],
@@ -100,7 +127,6 @@ function buildPrinter() {
     printerGroup.add(pillar);
   });
 
-  // Vigas horizontales superiores e inferiores
   const beamXGeo = new THREE.BoxGeometry(frameW + pillarSize, pillarSize, pillarSize);
   const beamZGeo = new THREE.BoxGeometry(pillarSize, pillarSize, frameW + pillarSize);
 
@@ -116,7 +142,6 @@ function buildPrinter() {
     });
   });
 
-  // Guías laterales Y fijas arriba
   const yRailGeo = new THREE.CylinderGeometry(2.5, 2.5, frameW - 10, 12);
   yRailGeo.rotateX(Math.PI / 2);
   [-frameW / 2 + 12, frameW / 2 - 12].forEach(x => {
@@ -128,7 +153,7 @@ function buildPrinter() {
 
 buildPrinter();
 
-// Grupo Cama Caliente (se mueve en Y verticalmente en Three.js = eje Z de impresión)
+// Grupo Cama Caliente
 const bedAssembly = new THREE.Group();
 const bedPlate = new THREE.Mesh(new THREE.BoxGeometry(BED_SIZE, 4, BED_SIZE), bedMaterial);
 bedPlate.position.y = -2;
@@ -140,7 +165,7 @@ bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
 printerGroup.add(bedAssembly);
 
-// Puente móvil en Z (eje Y de impresión)
+// Puente móvil en Z
 const topY = BUILD_HEIGHT + 42;
 const gantryBridge = new THREE.Group();
 gantryBridge.position.y = topY;
@@ -168,17 +193,15 @@ const nozzle = new THREE.Mesh(
   new THREE.ConeGeometry(3.2, 7, 16).rotateX(Math.PI),
   new THREE.MeshStandardMaterial({ color: '#f1c40f', metalness: 0.9, roughness: 0.2 })
 );
-nozzle.position.y = -16.5; // Punta exacta de extrusión en y = -20 relativo a toolhead
+nozzle.position.y = -16.5;
 toolhead.add(nozzle);
 
-// Luz cálida en la boquilla
 const nozzleLight = new THREE.PointLight('#ff9933', 1.8, 45);
 nozzleLight.position.set(0, -18, 0);
 toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Malla donde se dibuja el filamento depositado (hija de bedAssembly para bajar con la cama)
 let printedLinesMesh = null;
 
 // --- SLICER GEOMÉTRICO EN JAVASCRIPT ---
@@ -186,7 +209,6 @@ function sliceGeometry(rawGeometry) {
   const geo = rawGeometry.clone();
   geo.computeBoundingBox();
 
-  // Normalizar escala y centrar en la cama (orientación Three.js: Y es altura)
   geo.rotateX(-Math.PI / 2);
   geo.computeBoundingBox();
 
@@ -195,7 +217,7 @@ function sliceGeometry(rawGeometry) {
   box.getSize(size);
 
   const maxDim = Math.max(size.x, size.y, size.z);
-  const targetSize = 95; // Tamaño máximo de pieza en mm
+  const targetSize = 95;
   const scale = targetSize / maxDim;
   geo.scale(scale, scale, scale);
 
@@ -204,7 +226,6 @@ function sliceGeometry(rawGeometry) {
   const center = new THREE.Vector3();
   newBox.getCenter(center);
 
-  // Apoyar base en Y = 0 y centrar en X = 0, Z = 0
   geo.translate(-center.x, -newBox.min.y, -center.z);
   geo.computeBoundingBox();
 
@@ -213,7 +234,6 @@ function sliceGeometry(rawGeometry) {
   const isIndexed = geo.index !== null;
   const triCount = isIndexed ? geo.index.count / 3 : posAttr.count / 3;
 
-  // Extraer triángulos
   const triangles = [];
   const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
   for (let i = 0; i < triCount; i++) {
@@ -230,7 +250,6 @@ function sliceGeometry(rawGeometry) {
     triangles.push({ a: vA.clone(), b: vB.clone(), c: vC.clone(), minY, maxY });
   }
 
-  // Cortar capa por capa
   const numLayers = Math.max(1, Math.floor(modelHeight / LAYER_HEIGHT));
   const vertices = [];
   toolpathPoints = [];
@@ -257,8 +276,6 @@ function sliceGeometry(rawGeometry) {
     if (rawSegments.length === 0) continue;
 
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
-
-    // Ordenar segmentos por cercanía para que el cabezal recorra el perímetro fluidamente
     const ordered = orderSegments(rawSegments);
 
     ordered.forEach(([p1, p2]) => {
@@ -271,7 +288,6 @@ function sliceGeometry(rawGeometry) {
     });
   }
 
-  // Crear geometría de líneas única
   if (printedLinesMesh) {
     bedAssembly.remove(printedLinesMesh);
     printedLinesMesh.geometry.dispose();
@@ -336,10 +352,9 @@ function orderSegments(segments) {
   return result;
 }
 
-// --- MODELO INICIAL POR DEFECTO (TOROIDE / JARRON TORCIDO) ---
 function loadDefaultModel() {
   const geo = new THREE.TorusKnotGeometry(28, 9, 120, 20, 2, 3);
-  geo.rotateX(Math.PI / 2); // Compensar rotación interna del slicer
+  geo.rotateX(Math.PI / 2);
   sliceGeometry(geo);
 }
 
@@ -361,7 +376,6 @@ document.getElementById('stlInput').addEventListener('change', (e) => {
   reader.readAsArrayBuffer(file);
 });
 
-// Soporte Drag & Drop directo sobre la ventana
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => {
   e.preventDefault();
@@ -373,9 +387,27 @@ window.addEventListener('drop', (e) => {
   }
 });
 
+// --- MOSTRAR / OCULTAR PANEL DE CONFIGURACIÓN ---
+const uiContainer = document.getElementById('ui-container');
+const toggleUiBtn = document.getElementById('toggleUiBtn');
+const closeUiBtn = document.getElementById('closeUiBtn');
+
+// Inicia colapsado para no tapar el fondo de pantalla; clic en ⚙️ para abrir
+uiContainer.classList.add('collapsed');
+
+toggleUiBtn.addEventListener('click', () => {
+  uiContainer.classList.toggle('collapsed');
+});
+
+closeUiBtn.addEventListener('click', () => {
+  uiContainer.classList.add('collapsed');
+});
+
 // --- CONTROLES DE PERSONALIZACIÓN ---
 const filamentInput = document.getElementById('filamentColor');
 const printerInput = document.getElementById('printerColor');
+const chassisOpacitySlider = document.getElementById('chassisOpacitySlider');
+const chassisOpacityVal = document.getElementById('chassisOpacityVal');
 const bgInput = document.getElementById('bgColor');
 const speedSlider = document.getElementById('speedSlider');
 const speedVal = document.getElementById('speedVal');
@@ -387,10 +419,18 @@ const rotateSpeedVal = document.getElementById('rotateSpeedVal');
 
 filamentInput.addEventListener('input', (e) => filamentMaterial.color.set(e.target.value));
 printerInput.addEventListener('input', (e) => chassisMaterial.color.set(e.target.value));
+
+chassisOpacitySlider.addEventListener('input', (e) => {
+  const val = parseFloat(e.target.value);
+  setChassisOpacity(val);
+  chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
+});
+
 bgInput.addEventListener('input', (e) => {
   scene.background.set(e.target.value);
   scene.fog.color.set(e.target.value);
 });
+
 speedSlider.addEventListener('input', (e) => {
   printSpeed = parseFloat(e.target.value);
   speedVal.textContent = `${printSpeed.toFixed(1)}x`;
@@ -415,6 +455,11 @@ function weColorToThree(weColorString) {
 
 window.wallpaperPropertyListener = {
   applyUserProperties: function (properties) {
+    if (properties.showwebmenu !== undefined) {
+      const show = properties.showwebmenu.value;
+      toggleUiBtn.classList.toggle('hidden-completely', !show);
+      if (!show) uiContainer.classList.add('collapsed');
+    }
     if (properties.filamentcolor) {
       const c = weColorToThree(properties.filamentcolor.value);
       filamentMaterial.color.copy(c);
@@ -424,6 +469,12 @@ window.wallpaperPropertyListener = {
       const c = weColorToThree(properties.printercolor.value);
       chassisMaterial.color.copy(c);
       printerInput.value = '#' + c.getHexString();
+    }
+    if (properties.chassisopacity !== undefined) {
+      const val = properties.chassisopacity.value;
+      setChassisOpacity(val);
+      chassisOpacitySlider.value = val;
+      chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
     }
     if (properties.bgcolor) {
       const c = weColorToThree(properties.bgcolor.value);
@@ -449,7 +500,6 @@ window.wallpaperPropertyListener = {
       rotateSpeedVal.textContent = val.toFixed(1);
     }
     if (properties.modelfile && properties.modelfile.value) {
-      // Wallpaper Engine entrega ruta local file:///
       const filePath = 'file:///' + properties.modelfile.value.replace(/\\/g, '/');
       fetch(filePath)
         .then(res => res.arrayBuffer())
@@ -459,21 +509,10 @@ window.wallpaperPropertyListener = {
   }
 };
 
-// --- AUTO-OCULTAR UI AL DEJAR QUIETO EL MOUSE ---
-let uiTimeout;
-const uiContainer = document.getElementById('ui-container');
-window.addEventListener('mousemove', () => {
-  uiContainer.classList.remove('ui-hidden');
-  clearTimeout(uiTimeout);
-  uiTimeout = setTimeout(() => {
-    uiContainer.classList.add('ui-hidden');
-  }, 3000);
-});
-
 // --- LOOP DE ANIMACIÓN ---
 const layerInfoEl = document.getElementById('layerInfo');
 const progressInfoEl = document.getElementById('progressInfo');
-const nozzleTipHeight = topY - 20; // Altura fija donde ocurre la extrusión
+const nozzleTipHeight = topY - 20;
 
 const clock = new THREE.Clock();
 
@@ -483,7 +522,6 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.1);
 
   if (totalSegments > 0 && printedLinesMesh) {
-    // Avanzar segmentos según velocidad
     const segmentsPerSecond = Math.max(40, totalSegments * 0.04) * printSpeed;
     currentSegmentFloat += segmentsPerSecond * dt;
 
@@ -499,22 +537,16 @@ function animate() {
     const frac = currentSegmentFloat - segIdx;
     const currentSeg = toolpathPoints[segIdx];
 
-    // Dibujar todos los segmentos completados (2 vértices por segmento)
     printedLinesMesh.geometry.setDrawRange(0, (segIdx + 1) * 2);
 
-    // Interpolar posición exacta del cabezal dentro del segmento actual
     const tipX = THREE.MathUtils.lerp(currentSeg.start.x, currentSeg.end.x, frac);
     const tipY = currentSeg.start.y;
     const tipZ = THREE.MathUtils.lerp(currentSeg.start.z, currentSeg.end.z, frac);
 
-    // Mover puente en Z (profundidad) y cabezal en X
     gantryBridge.position.z = tipZ;
     toolhead.position.x = tipX;
-
-    // Bajar la cama para que la capa actual coincida siempre con la punta de la boquilla
     bedAssembly.position.y = nozzleTipHeight - tipY;
 
-    // Actualizar HUD
     const totalLayers = layerStartIndices.length;
     const pct = Math.floor((segIdx / totalSegments) * 100);
     layerInfoEl.textContent = `Capa: ${currentSeg.layer} / ${totalLayers}`;
