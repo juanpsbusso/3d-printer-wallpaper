@@ -88,9 +88,9 @@
       },
       "modelfile": {
         "order": 13,
-        "text": "Custom .STL File",
-        "type": "file",
-        "fileType": "stl"
+        "text": "Custom .STL Path (or use ⚙️ in wallpaper)",
+        "type": "textinput",
+        "value": ""
       }
     }
   }
