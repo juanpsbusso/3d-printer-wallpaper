@@ -14,7 +14,6 @@ let layerStartIndices = [];
 let toolpathPoints = [];
 let isLooping = true;
 let isCameraLocked = false;
-let savedAutoRotate = true;
 
 // --- ESCENA, CÁMARA Y RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -31,14 +30,13 @@ scene.fog = new THREE.FogExp2('#0d0f14', 0.0016);
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
 camera.position.set(220, 190, 240);
 
-// Configuración suave de OrbitControls + Shift+Arrastre para mover (Pan) con clic izquierdo
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.enablePan = true;
 controls.screenSpacePanning = true;
 controls.enableZoom = true;
-controls.rotateSpeed = 0.45; // Movimiento suave, menos brusco
+controls.rotateSpeed = 0.45;
 controls.zoomSpeed = 0.85;
 controls.panSpeed = 0.7;
 controls.minDistance = 80;
@@ -407,79 +405,5 @@ function setCameraLocked(locked) {
   lockCameraToggle.checked = locked;
 
   if (locked) {
-    savedAutoRotate = controls.autoRotate;
     controls.autoRotate = false;
     lockCameraBtn.textContent = '🔒';
-    lockCameraBtn.classList.add('locked-active');
-    cameraPad.classList.add('pad-locked');
-    autoRotateGroup.classList.add('disabled');
-    rotateSpeedGroup.classList.add('disabled');
-  } else {
-    controls.autoRotate = autoRotateToggle.checked;
-    lockCameraBtn.textContent = '🔓';
-    lockCameraBtn.classList.remove('locked-active');
-    cameraPad.classList.remove('pad-locked');
-    autoRotateGroup.classList.remove('disabled');
-    rotateSpeedGroup.classList.toggle('disabled', !autoRotateToggle.checked);
-  }
-}
-
-lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked));
-lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked));
-
-toggleCameraPadBtn.addEventListener('click', () => {
-  cameraPad.classList.toggle('collapsed');
-});
-
-closeCameraPadBtn.addEventListener('click', () => {
-  cameraPad.classList.add('collapsed');
-});
-
-// Acciones de movimiento por botones (orbitar, pan, zoom, vistas)
-function executeCameraAction(action) {
-  if (isCameraLocked) return;
-
-  const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
-  const panStep = 14;
-  const rotStep = 0.14;
-
-  // Vectores locales de pantalla para desplazar suavemente
-  const right = new THREE.Vector3();
-  const up = new THREE.Vector3();
-  camera.matrix.extractBasis(right, up, new THREE.Vector3());
-
-  switch (action) {
-    case 'orbit-left':
-      spherical.theta += rotStep;
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-right':
-      spherical.theta -= rotStep;
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-up':
-      spherical.phi = Math.max(0.15, spherical.phi - rotStep);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-    case 'orbit-down':
-      spherical.phi = Math.min(Math.PI - 0.15, spherical.phi + rotStep);
-      offset.setFromSpherical(spherical);
-      camera.position.copy(controls.target).add(offset);
-      break;
-
-    case 'pan-left':
-      controls.target.addScaledVector(right, -panStep);
-      camera.position.addScaledVector(right, -panStep);
-      break;
-    case 'pan-right':
-      controls.target.addScaledVector(right, panStep);
-      camera.position.addScaledVector(right, panStep);
-      break;
-    case 'pan-up':
-      controls.target.addScaledVector(up, panStep);
-      camera.position.addScaledVector(up, panStep);
-      break;
