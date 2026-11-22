@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,120 +17,127 @@
 <body>
   <canvas id="canvas3d"></canvas>
 
-  <!-- Botones flotantes minimalistas -->
-  <div id="quick-actions">
-    <button id="playPauseBtn" class="icon-btn" title="Pausar / Reanudar impresión">⏸️</button>
-    <button id="nightModeBtn" class="icon-btn" title="Modo Nocturno">🌙</button>
-    <button id="lockCameraBtn" class="icon-btn" title="Bloquear / Desbloquear cámara">🔓</button>
-    <button id="toggleCameraPadBtn" class="icon-btn" title="Joysticks de cámara">🕹️</button>
-    <button id="toggleUiBtn" class="icon-btn" title="Configuración">⚙️</button>
-  </div>
+  <!-- Single minimal settings gear button -->
+  <button id="toggleUiBtn" class="gear-btn" title="Settings & Camera">⚙️</button>
 
-  <!-- Panel de Joysticks de Cámara -->
-  <div id="camera-pad" class="collapsed">
-    <div class="pad-header">
-      <span>Control Analógico Cámara</span>
-      <button id="closeCameraPadBtn" title="Cerrar">✕</button>
-    </div>
-
-    <div class="joysticks-row">
-      <div class="joy-wrapper">
-        <span class="pad-label">Rotar</span>
-        <div class="joystick-base" id="joyOrbit">
-          <div class="joystick-stick" id="stickOrbit"></div>
-        </div>
-      </div>
-
-      <div class="joy-wrapper">
-        <span class="pad-label">Mover (Pan)</span>
-        <div class="joystick-base" id="joyPan">
-          <div class="joystick-stick" id="stickPan"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="pad-zoom">
-      <button id="zoomInBtn">➕ Acercar</button>
-      <button id="zoomOutBtn">➖ Alejar</button>
-    </div>
-
-    <div class="pad-presets">
-      <button data-cam="view-front">Frente</button>
-      <button data-cam="view-iso">3D</button>
-      <button data-cam="view-top">Arriba</button>
-    </div>
-  </div>
-
-  <!-- Panel principal de configuración -->
+  <!-- Unified Panel -->
   <div id="ui-container" class="collapsed">
     <div class="panel">
       <div class="panel-header">
-        <h3>Simulador Impresión 3D</h3>
-        <button id="closeUiBtn" title="Ocultar panel">✕</button>
+        <h3>3D Printer Simulator</h3>
+        <button id="closeUiBtn" title="Close">✕</button>
       </div>
 
-      <label class="file-btn">
-        📂 Cargar archivo .STL
-        <input type="file" id="stlInput" accept=".stl" hidden />
-      </label>
-
-      <div class="control-group">
-        <label for="filamentColor">Filamento</label>
-        <input type="color" id="filamentColor" value="#00a8ff" />
+      <!-- Quick Action Bar inside menu -->
+      <div class="quick-bar">
+        <button id="playPauseBtn" title="Play / Pause">⏸️ Pause</button>
+        <button id="nightModeBtn" title="Toggle Night Mode">🌙 Night</button>
+        <button id="lockCameraBtn" title="Lock / Unlock Camera">🔓 Free</button>
       </div>
 
-      <div class="control-group">
-        <label for="infillSlider">Relleno (Infill): <span id="infillVal">20%</span></label>
-        <input type="range" id="infillSlider" min="0" max="60" step="10" value="20" />
+      <!-- Tabs: Print Settings / Camera Controls -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="tab-settings">Settings</button>
+        <button class="tab-btn" data-tab="tab-camera">Camera</button>
       </div>
 
-      <div class="control-group">
-        <label for="printerColor">Chasis Impresora</label>
-        <input type="color" id="printerColor" value="#242730" />
+      <!-- TAB 1: SETTINGS -->
+      <div id="tab-settings" class="tab-content active">
+        <label class="file-btn">
+          📂 Load .STL File
+          <input type="file" id="stlInput" accept=".stl" hidden />
+        </label>
+
+        <div class="control-group">
+          <label for="filamentColor">Filament Color</label>
+          <input type="color" id="filamentColor" value="#00a8ff" />
+        </div>
+
+        <div class="control-group">
+          <label for="infillSlider">Infill Density: <span id="infillVal">20%</span></label>
+          <input type="range" id="infillSlider" min="0" max="60" step="10" value="20" />
+        </div>
+
+        <div class="control-group">
+          <label for="printerColor">Frame Color</label>
+          <input type="color" id="printerColor" value="#242730" />
+        </div>
+
+        <div class="control-group">
+          <label for="chassisOpacitySlider">Frame Opacity: <span id="chassisOpacityVal">35%</span></label>
+          <input type="range" id="chassisOpacitySlider" min="0" max="1.0" step="0.05" value="0.35" />
+        </div>
+
+        <div class="control-group">
+          <label for="bgColor">Background</label>
+          <input type="color" id="bgColor" value="#0d0f14" />
+        </div>
+
+        <div class="control-group">
+          <label for="speedSlider">Print Speed: <span id="speedVal">1.0x</span></label>
+          <input type="range" id="speedSlider" min="0" max="5.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="control-group">
+          <label for="nightModeToggle">Night Mode</label>
+          <input type="checkbox" id="nightModeToggle" />
+        </div>
+
+        <div class="control-group">
+          <label for="reverseLoopToggle">Reverse Loop</label>
+          <input type="checkbox" id="reverseLoopToggle" checked />
+        </div>
       </div>
 
-      <div class="control-group">
-        <label for="chassisOpacitySlider">Opacidad Chasis: <span id="chassisOpacityVal">35%</span></label>
-        <input type="range" id="chassisOpacitySlider" min="0" max="1.0" step="0.05" value="0.35" />
-      </div>
+      <!-- TAB 2: CAMERA -->
+      <div id="tab-camera" class="tab-content">
+        <div id="camera-controls-wrapper">
+          <div class="joysticks-row">
+            <div class="joy-wrapper">
+              <span class="pad-label">Orbit</span>
+              <div class="joystick-base" id="joyOrbit">
+                <div class="joystick-stick" id="stickOrbit"></div>
+              </div>
+            </div>
 
-      <div class="control-group">
-        <label for="bgColor">Fondo</label>
-        <input type="color" id="bgColor" value="#0d0f14" />
-      </div>
+            <div class="joy-wrapper">
+              <span class="pad-label">Pan</span>
+              <div class="joystick-base" id="joyPan">
+                <div class="joystick-stick" id="stickPan"></div>
+              </div>
+            </div>
+          </div>
 
-      <div class="control-group">
-        <label for="speedSlider">Velocidad: <span id="speedVal">1.0x</span></label>
-        <input type="range" id="speedSlider" min="0" max="5.0" step="0.1" value="1.0" />
-      </div>
+          <div class="pad-zoom">
+            <button id="zoomInBtn">➕ Zoom In</button>
+            <button id="zoomOutBtn">➖ Zoom Out</button>
+          </div>
 
-      <div class="control-group">
-        <label for="nightModeToggle">Modo Nocturno</label>
-        <input type="checkbox" id="nightModeToggle" />
-      </div>
+          <div class="pad-presets">
+            <button data-cam="view-front">Front</button>
+            <button data-cam="view-iso">3D</button>
+            <button data-cam="view-top">Top</button>
+          </div>
+        </div>
 
-      <div class="control-group">
-        <label for="reverseLoopToggle">Bucle Ida y Vuelta</label>
-        <input type="checkbox" id="reverseLoopToggle" checked />
-      </div>
+        <div class="control-group" style="margin-top: 12px;">
+          <label for="lockCameraToggle">Lock Camera</label>
+          <input type="checkbox" id="lockCameraToggle" />
+        </div>
 
-      <div class="control-group">
-        <label for="lockCameraToggle">Bloquear Cámara</label>
-        <input type="checkbox" id="lockCameraToggle" />
-      </div>
+        <div class="control-group" id="autoRotateGroup">
+          <label for="autoRotateToggle">Auto Rotate</label>
+          <input type="checkbox" id="autoRotateToggle" checked />
+        </div>
 
-      <div class="control-group" id="autoRotateGroup">
-        <label for="autoRotateToggle">Rotación Cámara</label>
-        <input type="checkbox" id="autoRotateToggle" checked />
-      </div>
-
-      <div class="control-group" id="rotateSpeedGroup">
-        <label for="rotateSpeedSlider">Vel. Rotación: <span id="rotateSpeedVal">0.5</span></label>
-        <input type="range" id="rotateSpeedSlider" min="0.1" max="3.0" step="0.1" value="0.5" />
+        <div class="control-group" id="rotateSpeedGroup">
+          <label for="rotateSpeedSlider">Rotate Speed: <span id="rotateSpeedVal">0.5</span></label>
+          <input type="range" id="rotateSpeedSlider" min="0.1" max="3.0" step="0.1" value="0.5" />
+        </div>
       </div>
 
       <div class="status-bar">
-        <span id="layerInfo">Capa: 0 / 0</span>
+        <span id="layerInfo">Layer: 0 / 0</span>
         <span id="progressInfo">0%</span>
       </div>
     </div>
