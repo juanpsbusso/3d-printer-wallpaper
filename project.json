@@ -1,6 +1,6 @@
 {
   "title": "Simulador Impresión 3D",
-  "description": "Simulador interactivo de impresión 3D CoreXY. Cargá cualquier archivo .STL y personalizá los colores, transparencia y cámara.",
+  "description": "Simulador interactivo de impresión 3D CoreXY con controles de cámara, bloqueo de posición y carga de archivos .STL.",
   "type": "web",
   "file": "index.html",
   "general": {
@@ -8,24 +8,30 @@
     "properties": {
       "showwebmenu": {
         "order": 1,
-        "text": "Mostrar botón menú flotante",
+        "text": "Mostrar iconos flotantes",
         "type": "bool",
         "value": true
       },
-      "filamentcolor": {
+      "lockcamera": {
         "order": 2,
+        "text": "Bloquear posición de cámara",
+        "type": "bool",
+        "value": false
+      },
+      "filamentcolor": {
+        "order": 3,
         "text": "Color del Filamento",
         "type": "color",
         "value": "0 0.66 1"
       },
       "printercolor": {
-        "order": 3,
+        "order": 4,
         "text": "Color del Chasis",
         "type": "color",
         "value": "0.14 0.15 0.19"
       },
       "chassisopacity": {
-        "order": 4,
+        "order": 5,
         "text": "Opacidad del Chasis",
         "type": "slider",
         "min": 0.1,
@@ -33,13 +39,13 @@
         "value": 1.0
       },
       "bgcolor": {
-        "order": 5,
+        "order": 6,
         "text": "Color de Fondo",
         "type": "color",
         "value": "0.05 0.06 0.08"
       },
       "printspeed": {
-        "order": 6,
+        "order": 7,
         "text": "Velocidad de Impresión",
         "type": "slider",
         "min": 0.2,
@@ -47,13 +53,13 @@
         "value": 1.0
       },
       "autorotate": {
-        "order": 7,
+        "order": 8,
         "text": "Rotación Automática",
         "type": "bool",
         "value": true
       },
       "rotatespeed": {
-        "order": 8,
+        "order": 9,
         "text": "Velocidad de Rotación",
         "type": "slider",
         "min": 0.1,
@@ -61,7 +67,7 @@
         "value": 0.6
       },
       "modelfile": {
-        "order": 9,
+        "order": 10,
         "text": "Archivo .STL Personalizado",
         "type": "file",
         "fileType": "stl"
