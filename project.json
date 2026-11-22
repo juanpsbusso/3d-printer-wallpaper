@@ -1,6 +1,6 @@
 {
-  "title": "Simulador Impresión 3D",
-  "description": "Simulador interactivo de impresión 3D CoreXY con modo nocturno, bucle reversible, sombreado 3D por capas y joysticks de cámara.",
+  "title": "3D Printer Simulator",
+  "description": "Interactive CoreXY 3D printing live wallpaper with Night Mode, reverse loop playback, 3D layer shading, analog camera joysticks, and custom .STL file support.",
   "type": "web",
   "file": "index.html",
   "general": {
@@ -8,37 +8,37 @@
     "properties": {
       "showwebmenu": {
         "order": 1,
-        "text": "Mostrar iconos flotantes",
+        "text": "Show Settings Gear Button",
         "type": "bool",
         "value": true
       },
       "nightmode": {
         "order": 2,
-        "text": "Modo Nocturno",
+        "text": "Night Mode",
         "type": "bool",
         "value": false
       },
       "reverseloop": {
         "order": 3,
-        "text": "Bucle Ida y Vuelta (Reversa)",
+        "text": "Reverse Loop",
         "type": "bool",
         "value": true
       },
       "lockcamera": {
         "order": 4,
-        "text": "Bloquear posición de cámara",
+        "text": "Lock Camera Position",
         "type": "bool",
         "value": false
       },
       "filamentcolor": {
         "order": 5,
-        "text": "Color del Filamento",
+        "text": "Filament Color",
         "type": "color",
         "value": "0 0.66 1"
       },
       "infilldensity": {
         "order": 6,
-        "text": "Densidad de Relleno (%)",
+        "text": "Infill Density (%)",
         "type": "slider",
         "min": 0,
         "max": 60,
@@ -46,13 +46,13 @@
       },
       "printercolor": {
         "order": 7,
-        "text": "Color del Chasis",
+        "text": "Frame Color",
         "type": "color",
         "value": "0.14 0.15 0.19"
       },
       "chassisopacity": {
         "order": 8,
-        "text": "Opacidad del Chasis",
+        "text": "Frame Opacity",
         "type": "slider",
         "min": 0.0,
         "max": 1.0,
@@ -60,13 +60,13 @@
       },
       "bgcolor": {
         "order": 9,
-        "text": "Color de Fondo",
+        "text": "Background Color",
         "type": "color",
         "value": "0.05 0.06 0.08"
       },
       "printspeed": {
         "order": 10,
-        "text": "Velocidad de Impresión (0 = Pausa)",
+        "text": "Print Speed (0 = Pause)",
         "type": "slider",
         "min": 0.0,
         "max": 5.0,
@@ -74,13 +74,13 @@
       },
       "autorotate": {
         "order": 11,
-        "text": "Rotación Automática",
+        "text": "Auto Rotate Camera",
         "type": "bool",
         "value": true
       },
       "rotatespeed": {
         "order": 12,
-        "text": "Velocidad de Rotación",
+        "text": "Camera Rotate Speed",
         "type": "slider",
         "min": 0.1,
         "max": 3.0,
@@ -88,7 +88,7 @@
       },
       "modelfile": {
         "order": 13,
-        "text": "Archivo .STL Personalizado",
+        "text": "Custom .STL File",
         "type": "file",
         "fileType": "stl"
       }
