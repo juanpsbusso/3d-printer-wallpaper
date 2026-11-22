@@ -11,7 +11,7 @@ let printSpeed = 1.0;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
-let toolpathPoints = []; // [{x, y, z, extrude}]
+let toolpathPoints = []; // [{start, end, layer}]
 let isLooping = true;
 
 // --- ESCENA, CÁMARA Y RENDERER ---
@@ -187,7 +187,6 @@ function sliceGeometry(rawGeometry) {
   geo.computeBoundingBox();
 
   // Normalizar escala y centrar en la cama (orientación Three.js: Y es altura)
-  // Nota: Muchos STL vienen con Z arriba; rotamos -90° en X
   geo.rotateX(-Math.PI / 2);
   geo.computeBoundingBox();
 
@@ -381,6 +380,11 @@ const bgInput = document.getElementById('bgColor');
 const speedSlider = document.getElementById('speedSlider');
 const speedVal = document.getElementById('speedVal');
 
+const autoRotateToggle = document.getElementById('autoRotateToggle');
+const rotateSpeedGroup = document.getElementById('rotateSpeedGroup');
+const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
+const rotateSpeedVal = document.getElementById('rotateSpeedVal');
+
 filamentInput.addEventListener('input', (e) => filamentMaterial.color.set(e.target.value));
 printerInput.addEventListener('input', (e) => chassisMaterial.color.set(e.target.value));
 bgInput.addEventListener('input', (e) => {
@@ -390,6 +394,17 @@ bgInput.addEventListener('input', (e) => {
 speedSlider.addEventListener('input', (e) => {
   printSpeed = parseFloat(e.target.value);
   speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+});
+
+autoRotateToggle.addEventListener('change', (e) => {
+  controls.autoRotate = e.target.checked;
+  rotateSpeedGroup.classList.toggle('disabled', !e.target.checked);
+});
+
+rotateSpeedSlider.addEventListener('input', (e) => {
+  const val = parseFloat(e.target.value);
+  controls.autoRotateSpeed = val;
+  rotateSpeedVal.textContent = val.toFixed(1);
 });
 
 // --- INTEGRACIÓN NATIVA CON WALLPAPER ENGINE ---
@@ -420,6 +435,18 @@ window.wallpaperPropertyListener = {
       printSpeed = properties.printspeed.value;
       speedSlider.value = printSpeed;
       speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+    }
+    if (properties.autorotate !== undefined) {
+      const enabled = properties.autorotate.value;
+      controls.autoRotate = enabled;
+      autoRotateToggle.checked = enabled;
+      rotateSpeedGroup.classList.toggle('disabled', !enabled);
+    }
+    if (properties.rotatespeed) {
+      const val = properties.rotatespeed.value;
+      controls.autoRotateSpeed = val;
+      rotateSpeedSlider.value = val;
+      rotateSpeedVal.textContent = val.toFixed(1);
     }
     if (properties.modelfile && properties.modelfile.value) {
       // Wallpaper Engine entrega ruta local file:///
