@@ -7,6 +7,7 @@ const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
+const BED_SURFACE_Y = 20; // Fixed height of the print bed surface
 
 let printSpeed = 1.0;
 let lastNonZeroSpeed = 1.0;
@@ -113,7 +114,7 @@ const filamentMaterial = new THREE.MeshStandardMaterial({
   emissiveIntensity: 0.0
 });
 
-// --- COREXY PRINTER ASSEMBLY ---
+// --- PRINTER ASSEMBLY (FIXED BED + FLYING GANTRY) ---
 const printerGroup = new THREE.Group();
 const frameStructureGroup = new THREE.Group();
 printerGroup.add(frameStructureGroup);
@@ -153,19 +154,22 @@ function buildPrinter() {
     });
   });
 
-  const yRailGeo = new THREE.CylinderGeometry(2.5, 2.5, frameW - 10, 12);
-  yRailGeo.rotateX(Math.PI / 2);
-  [-frameW / 2 + 12, frameW / 2 - 12].forEach(x => {
-    const rail = new THREE.Mesh(yRailGeo, railMaterial);
-    rail.position.set(x, frameH - 18, 0);
-    frameStructureGroup.add(rail);
+  // Vertical Z guide rods on corners
+  const zRodGeo = new THREE.CylinderGeometry(2.2, 2.2, frameH - 16, 12);
+  [[-frameW / 2 + 12, -frameW / 2 + 12], [frameW / 2 - 12, -frameW / 2 + 12],
+   [-frameW / 2 + 12, frameW / 2 - 12], [frameW / 2 - 12, frameW / 2 - 12]].forEach(([x, z]) => {
+    const rod = new THREE.Mesh(zRodGeo, railMaterial);
+    rod.position.set(x, frameH / 2, z);
+    frameStructureGroup.add(rod);
   });
 }
 
 buildPrinter();
 
-// Heated Bed Assembly
+// Fixed Heated Bed Assembly
 const bedAssembly = new THREE.Group();
+bedAssembly.position.y = BED_SURFACE_Y;
+
 const bedPlate = new THREE.Mesh(new THREE.BoxGeometry(BED_SIZE, 4, BED_SIZE), bedMaterial);
 bedPlate.position.y = -2;
 bedPlate.receiveShadow = true;
@@ -181,21 +185,28 @@ bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
 printerGroup.add(bedAssembly);
 
-// Gantry Bridge
-const topY = BUILD_HEIGHT + 42;
-const nozzleTipHeight = topY - 20;
-bedAssembly.position.y = nozzleTipHeight;
+// Flying Gantry Assembly (moves in Y as layers build up, and in Z for depth)
+const gantryYAssembly = new THREE.Group();
+gantryYAssembly.position.y = BED_SURFACE_Y + 20;
+printerGroup.add(gantryYAssembly);
 
+// Side Y-rails that ride up with the Z gantry
+const sideRailGeo = new THREE.CylinderGeometry(2.5, 2.5, BED_SIZE + 30, 12).rotateX(Math.PI / 2);
+[-BED_SIZE / 2 - 13, BED_SIZE / 2 + 13].forEach(x => {
+  const sRail = new THREE.Mesh(sideRailGeo, railMaterial);
+  gantryYAssembly.add(sRail);
+});
+
+// X-bridge moving front-to-back (Z axis)
 const gantryBridge = new THREE.Group();
-gantryBridge.position.y = topY;
 const xRail = new THREE.Mesh(
   new THREE.CylinderGeometry(3, 3, BED_SIZE + 26, 12).rotateZ(Math.PI / 2),
   railMaterial
 );
 gantryBridge.add(xRail);
-printerGroup.add(gantryBridge);
+gantryYAssembly.add(gantryBridge);
 
-// Extruder Toolhead
+// Extruder Toolhead (nozzle tip sits at y = -20 relative to gantryYAssembly)
 const toolhead = new THREE.Group();
 const carriage = new THREE.Mesh(new THREE.BoxGeometry(22, 24, 22), chassisMaterial);
 carriage.position.y = 8;
@@ -231,17 +242,16 @@ toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Set initial camera framing centered on the print bed
+// Camera framing anchored cleanly to the fixed print bed
 function applyCameraPreset(view) {
-  const bedSurfaceY = bedAssembly.position.y;
-  const focusY = bedSurfaceY + 28; // Centers print bed + printed model
+  const focusY = BED_SURFACE_Y + 38; // Anchored to fixed bed + model height
 
   if (view === 'view-front') {
     controls.target.set(0, focusY, 0);
     camera.position.set(0, focusY + 12, 275);
   } else if (view === 'view-top') {
-    controls.target.set(0, bedSurfaceY + 15, 0);
-    camera.position.set(0, bedSurfaceY + 290, 25);
+    controls.target.set(0, BED_SURFACE_Y + 15, 0);
+    camera.position.set(0, BED_SURFACE_Y + 290, 25);
   } else {
     // 'view-iso' (3D)
     controls.target.set(0, focusY, 0);
@@ -258,11 +268,17 @@ function setChassisOpacity(alpha) {
 
   if (val <= 0.01) {
     frameStructureGroup.visible = false;
+    gantryYAssembly.children.forEach(child => {
+      if (child !== gantryBridge) child.visible = false;
+    });
     xRail.visible = false;
     carriage.visible = false;
     heatsink.visible = false;
   } else {
     frameStructureGroup.visible = true;
+    gantryYAssembly.children.forEach(child => {
+      child.visible = true;
+    });
     xRail.visible = true;
     carriage.visible = true;
     heatsink.visible = true;
@@ -1039,9 +1055,10 @@ function animate() {
     const tipY = currentSeg.start.y;
     const tipZ = THREE.MathUtils.lerp(currentSeg.start.z, currentSeg.end.z, frac);
 
+    // Bed stays fixed at BED_SURFACE_Y; gantry rises smoothly with layer height
     gantryBridge.position.z = tipZ;
     toolhead.position.x = tipX;
-    bedAssembly.position.y = nozzleTipHeight - tipY;
+    gantryYAssembly.position.y = BED_SURFACE_Y + tipY + 20;
 
     const totalLayers = layerStartIndices.length;
     const pct = Math.floor((segIdx / totalSegments) * 100);
