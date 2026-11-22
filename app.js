@@ -13,6 +13,8 @@ let totalSegments = 0;
 let layerStartIndices = [];
 let toolpathPoints = [];
 let isLooping = true;
+let isCameraLocked = false;
+let savedAutoRotate = true;
 
 // --- ESCENA, CÁMARA Y RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -29,20 +31,22 @@ scene.fog = new THREE.FogExp2('#0d0f14', 0.0016);
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1500);
 camera.position.set(220, 190, 240);
 
-// Configuración de OrbitControls compatible con Wallpaper Engine y escritorio
+// Configuración suave de OrbitControls + Shift+Arrastre para mover (Pan) con clic izquierdo
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
-controls.dampingFactor = 0.06;
+controls.dampingFactor = 0.08;
 controls.enablePan = true;
+controls.screenSpacePanning = true;
 controls.enableZoom = true;
-controls.rotateSpeed = 0.8;
-controls.zoomSpeed = 1.0;
-controls.panSpeed = 0.8;
+controls.rotateSpeed = 0.45; // Movimiento suave, menos brusco
+controls.zoomSpeed = 0.85;
+controls.panSpeed = 0.7;
+controls.minDistance = 80;
+controls.maxDistance = 650;
 controls.target.set(0, 65, 0);
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.6;
 
-// Asegurar captura de foco al hacer clic en Wallpaper Engine
 canvas.addEventListener('pointerdown', () => {
   window.focus();
 });
@@ -91,7 +95,6 @@ const filamentMaterial = new THREE.LineBasicMaterial({
   linewidth: 2
 });
 
-// Función para actualizar transparencia del chasis y guías
 function setChassisOpacity(alpha) {
   const val = Math.max(0.05, Math.min(1.0, alpha));
   chassisMaterial.opacity = val;
@@ -387,181 +390,96 @@ window.addEventListener('drop', (e) => {
   }
 });
 
-// --- MOSTRAR / OCULTAR PANEL DE CONFIGURACIÓN ---
-const uiContainer = document.getElementById('ui-container');
-const toggleUiBtn = document.getElementById('toggleUiBtn');
-const closeUiBtn = document.getElementById('closeUiBtn');
-
-// Inicia colapsado para no tapar el fondo de pantalla; clic en ⚙️ para abrir
-uiContainer.classList.add('collapsed');
-
-toggleUiBtn.addEventListener('click', () => {
-  uiContainer.classList.toggle('collapsed');
-});
-
-closeUiBtn.addEventListener('click', () => {
-  uiContainer.classList.add('collapsed');
-});
-
-// --- CONTROLES DE PERSONALIZACIÓN ---
-const filamentInput = document.getElementById('filamentColor');
-const printerInput = document.getElementById('printerColor');
-const chassisOpacitySlider = document.getElementById('chassisOpacitySlider');
-const chassisOpacityVal = document.getElementById('chassisOpacityVal');
-const bgInput = document.getElementById('bgColor');
-const speedSlider = document.getElementById('speedSlider');
-const speedVal = document.getElementById('speedVal');
-
+// --- SISTEMA DE BLOQUEO Y CONTROL DE CÁMARA ---
+const quickActions = document.getElementById('quick-actions');
+const lockCameraBtn = document.getElementById('lockCameraBtn');
+const toggleCameraPadBtn = document.getElementById('toggleCameraPadBtn');
+const cameraPad = document.getElementById('camera-pad');
+const closeCameraPadBtn = document.getElementById('closeCameraPadBtn');
+const lockCameraToggle = document.getElementById('lockCameraToggle');
+const autoRotateGroup = document.getElementById('autoRotateGroup');
 const autoRotateToggle = document.getElementById('autoRotateToggle');
 const rotateSpeedGroup = document.getElementById('rotateSpeedGroup');
-const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
-const rotateSpeedVal = document.getElementById('rotateSpeedVal');
 
-filamentInput.addEventListener('input', (e) => filamentMaterial.color.set(e.target.value));
-printerInput.addEventListener('input', (e) => chassisMaterial.color.set(e.target.value));
+function setCameraLocked(locked) {
+  isCameraLocked = locked;
+  controls.enabled = !locked;
+  lockCameraToggle.checked = locked;
 
-chassisOpacitySlider.addEventListener('input', (e) => {
-  const val = parseFloat(e.target.value);
-  setChassisOpacity(val);
-  chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
-});
-
-bgInput.addEventListener('input', (e) => {
-  scene.background.set(e.target.value);
-  scene.fog.color.set(e.target.value);
-});
-
-speedSlider.addEventListener('input', (e) => {
-  printSpeed = parseFloat(e.target.value);
-  speedVal.textContent = `${printSpeed.toFixed(1)}x`;
-});
-
-autoRotateToggle.addEventListener('change', (e) => {
-  controls.autoRotate = e.target.checked;
-  rotateSpeedGroup.classList.toggle('disabled', !e.target.checked);
-});
-
-rotateSpeedSlider.addEventListener('input', (e) => {
-  const val = parseFloat(e.target.value);
-  controls.autoRotateSpeed = val;
-  rotateSpeedVal.textContent = val.toFixed(1);
-});
-
-// --- INTEGRACIÓN NATIVA CON WALLPAPER ENGINE ---
-function weColorToThree(weColorString) {
-  const rgb = weColorString.split(' ').map(Number);
-  return new THREE.Color(rgb[0], rgb[1], rgb[2]);
+  if (locked) {
+    savedAutoRotate = controls.autoRotate;
+    controls.autoRotate = false;
+    lockCameraBtn.textContent = '🔒';
+    lockCameraBtn.classList.add('locked-active');
+    cameraPad.classList.add('pad-locked');
+    autoRotateGroup.classList.add('disabled');
+    rotateSpeedGroup.classList.add('disabled');
+  } else {
+    controls.autoRotate = autoRotateToggle.checked;
+    lockCameraBtn.textContent = '🔓';
+    lockCameraBtn.classList.remove('locked-active');
+    cameraPad.classList.remove('pad-locked');
+    autoRotateGroup.classList.remove('disabled');
+    rotateSpeedGroup.classList.toggle('disabled', !autoRotateToggle.checked);
+  }
 }
 
-window.wallpaperPropertyListener = {
-  applyUserProperties: function (properties) {
-    if (properties.showwebmenu !== undefined) {
-      const show = properties.showwebmenu.value;
-      toggleUiBtn.classList.toggle('hidden-completely', !show);
-      if (!show) uiContainer.classList.add('collapsed');
-    }
-    if (properties.filamentcolor) {
-      const c = weColorToThree(properties.filamentcolor.value);
-      filamentMaterial.color.copy(c);
-      filamentInput.value = '#' + c.getHexString();
-    }
-    if (properties.printercolor) {
-      const c = weColorToThree(properties.printercolor.value);
-      chassisMaterial.color.copy(c);
-      printerInput.value = '#' + c.getHexString();
-    }
-    if (properties.chassisopacity !== undefined) {
-      const val = properties.chassisopacity.value;
-      setChassisOpacity(val);
-      chassisOpacitySlider.value = val;
-      chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
-    }
-    if (properties.bgcolor) {
-      const c = weColorToThree(properties.bgcolor.value);
-      scene.background.copy(c);
-      scene.fog.color.copy(c);
-      bgInput.value = '#' + c.getHexString();
-    }
-    if (properties.printspeed) {
-      printSpeed = properties.printspeed.value;
-      speedSlider.value = printSpeed;
-      speedVal.textContent = `${printSpeed.toFixed(1)}x`;
-    }
-    if (properties.autorotate !== undefined) {
-      const enabled = properties.autorotate.value;
-      controls.autoRotate = enabled;
-      autoRotateToggle.checked = enabled;
-      rotateSpeedGroup.classList.toggle('disabled', !enabled);
-    }
-    if (properties.rotatespeed) {
-      const val = properties.rotatespeed.value;
-      controls.autoRotateSpeed = val;
-      rotateSpeedSlider.value = val;
-      rotateSpeedVal.textContent = val.toFixed(1);
-    }
-    if (properties.modelfile && properties.modelfile.value) {
-      const filePath = 'file:///' + properties.modelfile.value.replace(/\\/g, '/');
-      fetch(filePath)
-        .then(res => res.arrayBuffer())
-        .then(buf => loadSTLFromBuffer(buf))
-        .catch(err => console.error('Error cargando STL desde WE:', err));
-    }
-  }
-};
+lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked));
+lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked));
 
-// --- LOOP DE ANIMACIÓN ---
-const layerInfoEl = document.getElementById('layerInfo');
-const progressInfoEl = document.getElementById('progressInfo');
-const nozzleTipHeight = topY - 20;
-
-const clock = new THREE.Clock();
-
-function animate() {
-  requestAnimationFrame(animate);
-
-  const dt = Math.min(clock.getDelta(), 0.1);
-
-  if (totalSegments > 0 && printedLinesMesh) {
-    const segmentsPerSecond = Math.max(40, totalSegments * 0.04) * printSpeed;
-    currentSegmentFloat += segmentsPerSecond * dt;
-
-    if (currentSegmentFloat >= totalSegments) {
-      if (isLooping) {
-        currentSegmentFloat = 0;
-      } else {
-        currentSegmentFloat = totalSegments - 1;
-      }
-    }
-
-    const segIdx = Math.floor(currentSegmentFloat);
-    const frac = currentSegmentFloat - segIdx;
-    const currentSeg = toolpathPoints[segIdx];
-
-    printedLinesMesh.geometry.setDrawRange(0, (segIdx + 1) * 2);
-
-    const tipX = THREE.MathUtils.lerp(currentSeg.start.x, currentSeg.end.x, frac);
-    const tipY = currentSeg.start.y;
-    const tipZ = THREE.MathUtils.lerp(currentSeg.start.z, currentSeg.end.z, frac);
-
-    gantryBridge.position.z = tipZ;
-    toolhead.position.x = tipX;
-    bedAssembly.position.y = nozzleTipHeight - tipY;
-
-    const totalLayers = layerStartIndices.length;
-    const pct = Math.floor((segIdx / totalSegments) * 100);
-    layerInfoEl.textContent = `Capa: ${currentSeg.layer} / ${totalLayers}`;
-    progressInfoEl.textContent = `${pct}%`;
-  }
-
-  controls.update();
-  renderer.render(scene, camera);
-}
-
-animate();
-
-// --- RESPONSIVE ---
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+toggleCameraPadBtn.addEventListener('click', () => {
+  cameraPad.classList.toggle('collapsed');
 });
+
+closeCameraPadBtn.addEventListener('click', () => {
+  cameraPad.classList.add('collapsed');
+});
+
+// Acciones de movimiento por botones (orbitar, pan, zoom, vistas)
+function executeCameraAction(action) {
+  if (isCameraLocked) return;
+
+  const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+  const panStep = 14;
+  const rotStep = 0.14;
+
+  // Vectores locales de pantalla para desplazar suavemente
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  camera.matrix.extractBasis(right, up, new THREE.Vector3());
+
+  switch (action) {
+    case 'orbit-left':
+      spherical.theta += rotStep;
+      offset.setFromSpherical(spherical);
+      camera.position.copy(controls.target).add(offset);
+      break;
+    case 'orbit-right':
+      spherical.theta -= rotStep;
+      offset.setFromSpherical(spherical);
+      camera.position.copy(controls.target).add(offset);
+      break;
+    case 'orbit-up':
+      spherical.phi = Math.max(0.15, spherical.phi - rotStep);
+      offset.setFromSpherical(spherical);
+      camera.position.copy(controls.target).add(offset);
+      break;
+    case 'orbit-down':
+      spherical.phi = Math.min(Math.PI - 0.15, spherical.phi + rotStep);
+      offset.setFromSpherical(spherical);
+      camera.position.copy(controls.target).add(offset);
+      break;
+
+    case 'pan-left':
+      controls.target.addScaledVector(right, -panStep);
+      camera.position.addScaledVector(right, -panStep);
+      break;
+    case 'pan-right':
+      controls.target.addScaledVector(right, panStep);
+      camera.position.addScaledVector(right, panStep);
+      break;
+    case 'pan-up':
+      controls.target.addScaledVector(up, panStep);
+      camera.position.addScaledVector(up, panStep);
+      break;
