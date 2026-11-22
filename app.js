@@ -71,7 +71,6 @@ const fillLight = new THREE.DirectionalLight(0x88b4ff, 0.55);
 fillLight.position.set(-180, 120, -150);
 scene.add(fillLight);
 
-// Rim light to highlight layer ridges and silhouette details (especially in Night Mode)
 const rimLight = new THREE.DirectionalLight(0x99ccff, 0.35);
 rimLight.position.set(-120, 190, -210);
 scene.add(rimLight);
@@ -672,22 +671,55 @@ function loadDefaultModel() {
   sliceGeometry(geo);
 }
 
-loadDefaultModel();
-
-// --- STL FILE LOADING ---
+// --- STL FILE LOADING & PERSISTENCE ---
 const stlLoader = new STLLoader();
+const stlInput = document.getElementById('stlInput');
 
-function loadSTLFromBuffer(buffer) {
+function loadSTLFromBuffer(buffer, saveToStorage = true) {
   const geometry = stlLoader.parse(buffer);
   sliceGeometry(geometry);
+
+  if (saveToStorage) {
+    try {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      }
+      localStorage.setItem('savedCustomSTL', btoa(binary));
+    } catch (e) {
+      // Ignore storage quota error if STL file is very large (>5MB)
+    }
+  }
 }
 
-document.getElementById('stlInput').addEventListener('change', (e) => {
+// Restore previously selected STL if available, otherwise load default Torus Knot
+(function initInitialModel() {
+  const savedBase64 = localStorage.getItem('savedCustomSTL');
+  if (savedBase64) {
+    try {
+      const binary = atob(savedBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      loadSTLFromBuffer(bytes.buffer, false);
+      return;
+    } catch (e) {
+      localStorage.removeItem('savedCustomSTL');
+    }
+  }
+  loadDefaultModel();
+})();
+
+stlInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = (ev) => loadSTLFromBuffer(ev.target.result);
+  reader.onload = (ev) => loadSTLFromBuffer(ev.target.result, true);
   reader.readAsArrayBuffer(file);
+  e.target.value = ''; // Allow re-selecting the same file if modified
 });
 
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -696,7 +728,7 @@ window.addEventListener('drop', (e) => {
   const file = e.dataTransfer.files[0];
   if (file && file.name.toLowerCase().endsWith('.stl')) {
     const reader = new FileReader();
-    reader.onload = (ev) => loadSTLFromBuffer(ev.target.result);
+    reader.onload = (ev) => loadSTLFromBuffer(ev.target.result, true);
     reader.readAsArrayBuffer(file);
   }
 });
@@ -1011,16 +1043,9 @@ window.wallpaperPropertyListener = {
       rotateSpeedSlider.value = val;
       rotateSpeedVal.textContent = val.toFixed(1);
     }
-    if (properties.modelfile && properties.modelfile.value) {
-      // Strip surrounding quotes if copied with Windows "Copy as path"
-      const cleanPath = properties.modelfile.value.trim().replace(/^["']|["']$/g, '');
-      if (cleanPath.toLowerCase().endsWith('.stl')) {
-        const filePath = 'file:///' + cleanPath.replace(/\\/g, '/');
-        fetch(filePath)
-          .then(res => res.arrayBuffer())
-          .then(buf => loadSTLFromBuffer(buf))
-          .catch(err => console.error('Error loading STL from WE:', err));
-      }
+    if (properties.browsestl) {
+      // Trigger native Chromium file explorer filtered by .stl
+      stlInput.click();
     }
   }
 };
