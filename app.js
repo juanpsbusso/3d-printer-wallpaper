@@ -8,7 +8,8 @@ const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
 const BED_SURFACE_Y = 20;
-const SETTINGS_STORAGE_KEY = 'printerSimSettings_v1';
+const SETTINGS_STORAGE_KEY = 'printerSimSettings_v2';
+const BOOT_TIMESTAMP = performance.now();
 
 const defaultSettings = {
   filamentColor: '#00a8ff',
@@ -25,9 +26,22 @@ const defaultSettings = {
   rotateSpeed: 0.5
 };
 
+function readCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function writeCookie(name, value) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; max-age=315360000; path=/; SameSite=Lax`;
+}
+
+function hasPersistedSettings() {
+  return readCookie(SETTINGS_STORAGE_KEY) !== null || localStorage.getItem(SETTINGS_STORAGE_KEY) !== null;
+}
+
 function loadSavedSettings() {
   try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    const raw = readCookie(SETTINGS_STORAGE_KEY) || localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return { ...defaultSettings };
     return { ...defaultSettings, ...JSON.parse(raw) };
   } catch (e) {
@@ -38,8 +52,10 @@ function loadSavedSettings() {
 const appState = loadSavedSettings();
 
 function saveSettings() {
+  const serialized = JSON.stringify(appState);
+  writeCookie(SETTINGS_STORAGE_KEY, serialized);
   try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appState));
+    localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
   } catch (e) {
     // Ignore storage quota errors
   }
@@ -59,7 +75,6 @@ let isCameraLocked = appState.lockCamera;
 let isNightMode = appState.nightMode;
 let currentRawGeometry = null;
 let userBgColor = appState.bgColor;
-let isInitialWEBoot = true;
 
 // --- SCENE, CAMERA & RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -1119,10 +1134,6 @@ function weColorToHex(weColorString) {
 
 window.wallpaperPropertyListener = {
   applyUserProperties: function (properties) {
-    // On initial boot, Wallpaper Engine sends default project.json values.
-    // Skip overwriting user's saved gear-menu settings on boot, but apply live changes if adjusted in WE's right sidebar.
-    const skipIfBootWithSaved = isInitialWEBoot && localStorage.getItem(SETTINGS_STORAGE_KEY) !== null;
-
     if (properties.showwebmenu !== undefined) {
       const show = properties.showwebmenu.value;
       toggleUiBtn.classList.toggle('hidden-completely', !show);
@@ -1132,51 +1143,53 @@ window.wallpaperPropertyListener = {
       }
     }
 
-    if (!skipIfBootWithSaved) {
-      if (properties.nightmode !== undefined) {
-        setNightMode(properties.nightmode.value, true);
-      }
-      if (properties.reverseloop !== undefined) {
-        setReverseLoop(properties.reverseloop.value, true);
-      }
-      if (properties.lockcamera !== undefined) {
-        setCameraLocked(properties.lockcamera.value, true);
-      }
-      if (properties.filamentcolor) {
-        setFilamentColorHex(weColorToHex(properties.filamentcolor.value), true);
-      }
-      if (properties.enableinfill !== undefined) {
-        setInfillEnabled(properties.enableinfill.value, true);
-      }
-      if (properties.infilldensity !== undefined) {
-        infillDensity = properties.infilldensity.value;
-        appState.infillDensity = infillDensity;
-        infillSlider.value = infillDensity;
-        infillVal.textContent = `${infillDensity}%`;
-        if (isInfillEnabled) reslicePreservingProgress();
-        saveSettings();
-      }
-      if (properties.printercolor) {
-        setPrinterColorHex(weColorToHex(properties.printercolor.value), true);
-      }
-      if (properties.chassisopacity !== undefined) {
-        setChassisOpacity(properties.chassisopacity.value, true);
-      }
-      if (properties.bgcolor) {
-        setBgColorHex(weColorToHex(properties.bgcolor.value), true);
-      }
-      if (properties.printspeed !== undefined) {
-        updateSpeed(properties.printspeed.value, true);
-      }
-      if (properties.autorotate !== undefined) {
-        setAutoRotate(properties.autorotate.value, true);
-      }
-      if (properties.rotatespeed) {
-        setRotateSpeed(properties.rotatespeed.value, true);
-      }
+    // Ignore Wallpaper Engine's initial default property bursts during the first 1.5s if user has saved settings
+    const isDuringBootBurst = (performance.now() - BOOT_TIMESTAMP) < 1500;
+    if (isDuringBootBurst && hasPersistedSettings()) {
+      return;
     }
 
-    isInitialWEBoot = false;
+    if (properties.nightmode !== undefined) {
+      setNightMode(properties.nightmode.value, true);
+    }
+    if (properties.reverseloop !== undefined) {
+      setReverseLoop(properties.reverseloop.value, true);
+    }
+    if (properties.lockcamera !== undefined) {
+      setCameraLocked(properties.lockcamera.value, true);
+    }
+    if (properties.filamentcolor) {
+      setFilamentColorHex(weColorToHex(properties.filamentcolor.value), true);
+    }
+    if (properties.enableinfill !== undefined) {
+      setInfillEnabled(properties.enableinfill.value, true);
+    }
+    if (properties.infilldensity !== undefined) {
+      infillDensity = properties.infilldensity.value;
+      appState.infillDensity = infillDensity;
+      infillSlider.value = infillDensity;
+      infillVal.textContent = `${infillDensity}%`;
+      if (isInfillEnabled) reslicePreservingProgress();
+      saveSettings();
+    }
+    if (properties.printercolor) {
+      setPrinterColorHex(weColorToHex(properties.printercolor.value), true);
+    }
+    if (properties.chassisopacity !== undefined) {
+      setChassisOpacity(properties.chassisopacity.value, true);
+    }
+    if (properties.bgcolor) {
+      setBgColorHex(weColorToHex(properties.bgcolor.value), true);
+    }
+    if (properties.printspeed !== undefined) {
+      updateSpeed(properties.printspeed.value, true);
+    }
+    if (properties.autorotate !== undefined) {
+      setAutoRotate(properties.autorotate.value, true);
+    }
+    if (properties.rotatespeed) {
+      setRotateSpeed(properties.rotatespeed.value, true);
+    }
   }
 };
 
