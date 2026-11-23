@@ -442,6 +442,24 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
   return true;
 }
 
+// --- SUBDIVIDE LONG TOOLPATH MOVES FOR SMOOTH NOZZLE ANIMATION ---
+function subdivideSegment(p1, p2, maxStep = 2.2) {
+  const dist = p1.distanceTo(p2);
+  if (dist <= maxStep) return [[p1, p2]];
+
+  const steps = Math.ceil(dist / maxStep);
+  const subSegs = [];
+  let prev = p1;
+
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const curr = (i === steps) ? p2 : new THREE.Vector3().lerpVectors(p1, p2, t);
+    subSegs.push([prev, curr]);
+    prev = curr;
+  }
+  return subSegs;
+}
+
 // --- RECTILINEAR INFILL GENERATOR (±45°) ---
 function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
   if (!isInfillEnabled || densityPercent <= 0 || perimeterSegments.length < 3) return [];
@@ -579,19 +597,20 @@ function sliceGeometry(rawGeometry) {
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
 
     const orderedPerimeter = orderSegments(rawSegments);
-    let orderedInfill = [];
+    let subdividedInfill = [];
 
     if (isInfillEnabled) {
-      const effectiveDensity = (l < 2 || l >= numLayers - 2)
-        ? Math.max(infillDensity, 55)
-        : infillDensity;
-      const rawInfill = generateLayerInfill(rawSegments, sliceY, l, effectiveDensity);
+      const rawInfill = generateLayerInfill(rawSegments, sliceY, l, infillDensity);
       if (rawInfill.length > 0) {
-        orderedInfill = orderSegments(rawInfill);
+        const orderedInfill = orderSegments(rawInfill);
+        // Subdivide long rectilinear infill lines into short steps so the nozzle traces them smoothly
+        for (const [p1, p2] of orderedInfill) {
+          subdividedInfill.push(...subdivideSegment(p1, p2, 2.2));
+        }
       }
     }
 
-    const combined = [...orderedPerimeter, ...orderedInfill];
+    const combined = [...orderedPerimeter, ...subdividedInfill];
 
     combined.forEach(([p1, p2]) => {
       if (appendBeadTriangles(p1, p2, BEAD_RADIUS, positions)) {
