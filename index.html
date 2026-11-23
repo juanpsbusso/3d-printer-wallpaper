@@ -9,7 +9,8 @@
     {
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+        "fflate": "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js"
       }
     }
   </script>
@@ -18,7 +19,7 @@
   <canvas id="canvas3d"></canvas>
 
   <!-- Single minimal settings gear button -->
-  <button id="toggleUiBtn" class="gear-btn" title="Settings & Camera">⚙️</button>
+  <button id="toggleUiBtn" class="gear-btn" title="Settings, Model & Camera">⚙️</button>
 
   <!-- Unified Panel -->
   <div id="ui-container" class="collapsed">
@@ -35,22 +36,28 @@
         <button id="lockCameraBtn" title="Lock / Unlock Camera">🔓 Free</button>
       </div>
 
-      <!-- Tabs: Print Settings / Camera Controls -->
+      <!-- Tabs: Settings / Model / Camera -->
       <div class="tabs">
-        <button class="tab-btn active" data-tab="tab-settings">Settings</button>
+        <button class="tab-btn active" data-tab="tab-settings">Print</button>
+        <button class="tab-btn" data-tab="tab-model">Model</button>
         <button class="tab-btn" data-tab="tab-camera">Camera</button>
       </div>
 
-      <!-- TAB 1: SETTINGS -->
+      <!-- TAB 1: PRINT & VISUAL SETTINGS -->
       <div id="tab-settings" class="tab-content active">
         <label class="file-btn">
-          📂 Load .STL File
-          <input type="file" id="stlInput" accept=".stl" hidden />
+          📂 Load .STL / .3MF File
+          <input type="file" id="modelInput" accept=".stl,.3mf" hidden />
         </label>
 
-        <div class="control-group">
-          <label for="filamentColor">Filament Color</label>
+        <div class="control-group" id="filamentColorGroup">
+          <label for="filamentColor">Filament Color <span id="multicolorBadge" class="badge-3mf" style="display:none;">3MF</span></label>
           <input type="color" id="filamentColor" value="#00a8ff" />
+        </div>
+
+        <div class="control-group" id="use3mfColorsGroup" style="display:none;">
+          <label for="use3mfColorsToggle">Use .3MF Embedded Colors</label>
+          <input type="checkbox" id="use3mfColorsToggle" checked />
         </div>
 
         <div class="control-group">
@@ -94,7 +101,38 @@
         </div>
       </div>
 
-      <!-- TAB 2: CAMERA -->
+      <!-- TAB 2: MODEL TRANSFORM (SCALE & ROTATION) -->
+      <div id="tab-model" class="tab-content">
+        <div class="control-group">
+          <label for="modelScaleSlider">Model Scale: <span id="modelScaleVal">100%</span></label>
+          <input type="range" id="modelScaleSlider" min="30" max="140" step="5" value="100" />
+        </div>
+
+        <div class="control-group">
+          <label for="rotXSlider">Rotate X: <span id="rotXVal">0°</span></label>
+          <input type="range" id="rotXSlider" min="-180" max="180" step="15" value="0" />
+        </div>
+
+        <div class="control-group">
+          <label for="rotYSlider">Rotate Y (Spin): <span id="rotYVal">0°</span></label>
+          <input type="range" id="rotYSlider" min="-180" max="180" step="15" value="0" />
+        </div>
+
+        <div class="control-group">
+          <label for="rotZSlider">Rotate Z: <span id="rotZVal">0°</span></label>
+          <input type="range" id="rotZSlider" min="-180" max="180" step="15" value="0" />
+        </div>
+
+        <div class="pad-presets" style="margin-top: 8px;">
+          <button id="rotX90Btn" title="Rotate +90° on X">↻ X +90°</button>
+          <button id="rotZ90Btn" title="Rotate +90° on Z">↻ Z +90°</button>
+          <button id="resetTransformBtn" title="Reset Scale & Rotation">⟲ Reset</button>
+        </div>
+
+        <p class="helper-hint">Adjust orientation so the model sits flat on the build plate.</p>
+      </div>
+
+      <!-- TAB 3: CAMERA -->
       <div id="tab-camera" class="tab-content">
         <div id="camera-controls-wrapper">
           <div class="joysticks-row">
