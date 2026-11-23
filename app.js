@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
 
 // --- GENERAL CONFIGURATION & PERSISTENT STATE ---
 const BED_SIZE = 160;
@@ -8,11 +9,13 @@ const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
 const BED_SURFACE_Y = 20;
-const SETTINGS_STORAGE_KEY = 'printerSimSettings_v2';
+const SETTINGS_STORAGE_KEY = 'printerSimSettings_v3';
+const MODEL_STORAGE_KEY = 'savedCustomModel_v3';
 const BOOT_TIMESTAMP = performance.now();
 
 const defaultSettings = {
   filamentColor: '#00a8ff',
+  use3mfColors: true,
   enableInfill: true,
   infillDensity: 20,
   printerColor: '#242730',
@@ -23,7 +26,13 @@ const defaultSettings = {
   reverseLoop: true,
   lockCamera: false,
   autoRotate: true,
-  rotateSpeed: 0.5
+  rotateSpeed: 0.5,
+  modelScale: 100,
+  rotX: 0,
+  rotY: 0,
+  rotZ: 0,
+  camPos: [205, BED_SURFACE_Y + 143, 225],
+  camTarget: [0, BED_SURFACE_Y + 38, 0]
 };
 
 function readCookie(name) {
@@ -65,6 +74,7 @@ let printSpeed = appState.printSpeed;
 let lastNonZeroSpeed = appState.printSpeed > 0 ? appState.printSpeed : 1.0;
 let isInfillEnabled = appState.enableInfill;
 let infillDensity = appState.infillDensity;
+let use3mfColors = appState.use3mfColors;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
@@ -73,7 +83,8 @@ let isReverseLoop = appState.reverseLoop;
 let printDirection = 1;
 let isCameraLocked = appState.lockCamera;
 let isNightMode = appState.nightMode;
-let currentRawGeometry = null;
+let currentModelTriangles = []; // Normalized triangle list { a, b, c, color }
+let currentModelHasEmbeddedColors = false;
 let userBgColor = appState.bgColor;
 
 // --- SCENE, CAMERA & RENDERER ---
@@ -106,6 +117,34 @@ controls.maxDistance = 650;
 controls.autoRotate = appState.autoRotate;
 controls.autoRotateSpeed = appState.rotateSpeed;
 
+// Restore saved camera position & target
+if (Array.isArray(appState.camPos) && appState.camPos.length === 3) {
+  camera.position.set(appState.camPos[0], appState.camPos[1], appState.camPos[2]);
+}
+if (Array.isArray(appState.camTarget) && appState.camTarget.length === 3) {
+  controls.target.set(appState.camTarget[0], appState.camTarget[1], appState.camTarget[2]);
+}
+controls.update();
+
+let camSaveTimeout = null;
+function scheduleCameraSave() {
+  clearTimeout(camSaveTimeout);
+  camSaveTimeout = setTimeout(() => {
+    appState.camPos = [
+      Number(camera.position.x.toFixed(2)),
+      Number(camera.position.y.toFixed(2)),
+      Number(camera.position.z.toFixed(2))
+    ];
+    appState.camTarget = [
+      Number(controls.target.x.toFixed(2)),
+      Number(controls.target.y.toFixed(2)),
+      Number(controls.target.z.toFixed(2))
+    ];
+    saveSettings();
+  }, 250);
+}
+
+controls.addEventListener('change', scheduleCameraSave);
 canvas.addEventListener('pointerdown', () => window.focus());
 
 // --- LIGHTING ---
@@ -163,11 +202,13 @@ const bedNeonMaterial = new THREE.MeshBasicMaterial({
   opacity: 0.0
 });
 
+// Uses vertexColors so each bead can carry its own .3MF color or the global filament color
 const filamentMaterial = new THREE.MeshStandardMaterial({
-  color: appState.filamentColor,
+  color: '#ffffff',
+  vertexColors: true,
   roughness: 0.36,
   metalness: 0.08,
-  emissive: appState.filamentColor,
+  emissive: '#ffffff',
   emissiveIntensity: 0.0
 });
 
@@ -332,7 +373,7 @@ toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Camera framing anchored to the fixed print bed
+// Camera framing presets
 function applyCameraPreset(view) {
   const focusY = BED_SURFACE_Y + 38;
 
@@ -347,9 +388,8 @@ function applyCameraPreset(view) {
     camera.position.set(205, focusY + 105, 225);
   }
   controls.update();
+  scheduleCameraSave();
 }
-
-applyCameraPreset('view-iso');
 
 // Frame transparency control
 function setChassisOpacity(alpha, persist = true) {
@@ -428,7 +468,7 @@ function setNightMode(enabled, persist = true) {
 
     filamentMaterial.roughness = 0.21;
     filamentMaterial.metalness = 0.16;
-    filamentMaterial.emissive.copy(filamentMaterial.color);
+    filamentMaterial.emissive.set(currentModelHasEmbeddedColors && use3mfColors ? '#334155' : appState.filamentColor);
     filamentMaterial.emissiveIntensity = 0.18;
 
     nozzleLight.intensity = 5.2;
@@ -473,8 +513,8 @@ function setNightMode(enabled, persist = true) {
 let printedMesh = null;
 const VERTS_PER_SEGMENT = 18;
 
-// --- 3D EXTRUSION BEAD GENERATOR ---
-function appendBeadTriangles(p1, p2, radius, outPositions) {
+// --- 3D EXTRUSION BEAD GENERATOR WITH VERTEX COLORS ---
+function appendBeadTriangles(p1, p2, radius, color, outPositions, outColors) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
   const dz = p2.z - p1.z;
@@ -499,13 +539,18 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
   outPositions.push(...c1, ...a1, ...a2, ...c1, ...a2, ...c2);
   outPositions.push(...b1, ...c1, ...c2, ...b1, ...c2, ...b2);
 
+  for (let i = 0; i < VERTS_PER_SEGMENT; i++) {
+    outColors.push(color.r, color.g, color.b);
+  }
+
   return true;
 }
 
 // --- SUBDIVIDE LONG TOOLPATH MOVES FOR SMOOTH NOZZLE ANIMATION ---
-function subdivideSegment(p1, p2, maxStep = 2.2) {
+function subdivideSegment(segObj, maxStep = 2.2) {
+  const { p1, p2, color } = segObj;
   const dist = p1.distanceTo(p2);
-  if (dist <= maxStep) return [[p1, p2]];
+  if (dist <= maxStep) return [segObj];
 
   const steps = Math.ceil(dist / maxStep);
   const subSegs = [];
@@ -514,18 +559,18 @@ function subdivideSegment(p1, p2, maxStep = 2.2) {
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const curr = (i === steps) ? p2 : new THREE.Vector3().lerpVectors(p1, p2, t);
-    subSegs.push([prev, curr]);
+    subSegs.push({ p1: prev, p2: curr, color });
     prev = curr;
   }
   return subSegs;
 }
 
 // --- RECTILINEAR INFILL GENERATOR (±45°) ---
-function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
-  if (!isInfillEnabled || densityPercent <= 0 || perimeterSegments.length < 3) return [];
+function generateLayerInfill(perimeterSegObjs, sliceY, layerIndex, densityPercent, fallbackColor) {
+  if (!isInfillEnabled || densityPercent <= 0 || perimeterSegObjs.length < 3) return [];
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (const [p1, p2] of perimeterSegments) {
+  for (const { p1, p2 } of perimeterSegObjs) {
     minX = Math.min(minX, p1.x, p2.x);
     maxX = Math.max(maxX, p1.x, p2.x);
     minZ = Math.min(minZ, p1.z, p2.z);
@@ -551,7 +596,8 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
     const dz = cos;
 
     const hits = [];
-    for (const [p1, p2] of perimeterSegments) {
+    for (const seg of perimeterSegObjs) {
+      const { p1, p2, color } = seg;
       const sx = p2.x - p1.x;
       const sz = p2.z - p1.z;
       const denom = dx * sz - dz * sx;
@@ -561,20 +607,22 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
       const s = ((p1.x - ox) * dz - (p1.z - oz) * dx) / denom;
 
       if (s >= 0 && s <= 1) {
-        hits.push(t);
+        hits.push({ t, color });
       }
     }
 
-    hits.sort((a, b) => a - b);
+    hits.sort((a, b) => a.t - b.t);
 
     for (let k = 0; k + 1 < hits.length; k += 2) {
-      const tStart = hits[k] + margin;
-      const tEnd = hits[k + 1] - margin;
+      const tStart = hits[k].t + margin;
+      const tEnd = hits[k + 1].t - margin;
       if (tEnd - tStart > 1.2) {
-        infillSegs.push([
-          new THREE.Vector3(ox + tStart * dx, sliceY, oz + tStart * dz),
-          new THREE.Vector3(ox + tEnd * dx, sliceY, oz + tEnd * dz)
-        ]);
+        const segColor = hits[k].color || fallbackColor;
+        infillSegs.push({
+          p1: new THREE.Vector3(ox + tStart * dx, sliceY, oz + tStart * dz),
+          p2: new THREE.Vector3(ox + tEnd * dx, sliceY, oz + tEnd * dz),
+          color: segColor
+        });
       }
     }
   }
@@ -582,64 +630,178 @@ function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPerce
   return infillSegs;
 }
 
-// --- GEOMETRIC SLICER ---
-function sliceGeometry(rawGeometry) {
-  currentRawGeometry = rawGeometry;
-  const geo = rawGeometry.clone();
-  geo.computeBoundingBox();
-
-  geo.rotateX(-Math.PI / 2);
-  geo.computeBoundingBox();
-
-  const box = geo.boundingBox;
-  const size = new THREE.Vector3();
-  box.getSize(size);
-
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const targetSize = 95;
-  const scale = targetSize / maxDim;
-  geo.scale(scale, scale, scale);
-
-  geo.computeBoundingBox();
-  const newBox = geo.boundingBox;
-  const center = new THREE.Vector3();
-  newBox.getCenter(center);
-
-  geo.translate(-center.x, -newBox.min.y, -center.z);
-  geo.computeBoundingBox();
-
-  const modelHeight = geo.boundingBox.max.y;
-  const posAttr = geo.attributes.position;
-  const isIndexed = geo.index !== null;
-  const triCount = isIndexed ? geo.index.count / 3 : posAttr.count / 3;
-
+// --- EXTRACT TRIANGLES & COLORS FROM ANY GEOMETRY OR .3MF GROUP ---
+function extractTrianglesFromObject3D(rootObj, defaultRotationX = -Math.PI / 2) {
   const triangles = [];
-  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
-  for (let i = 0; i < triCount; i++) {
-    const i0 = isIndexed ? geo.index.getX(i * 3) : i * 3;
-    const i1 = isIndexed ? geo.index.getX(i * 3 + 1) : i * 3 + 1;
-    const i2 = isIndexed ? geo.index.getX(i * 3 + 2) : i * 3 + 2;
+  let foundEmbeddedColors = false;
 
-    vA.fromBufferAttribute(posAttr, i0);
-    vB.fromBufferAttribute(posAttr, i1);
-    vC.fromBufferAttribute(posAttr, i2);
+  const baseRotMatrix = new THREE.Matrix4().makeRotationX(defaultRotationX);
+  rootObj.updateMatrixWorld(true);
 
-    const minY = Math.min(vA.y, vB.y, vC.y);
-    const maxY = Math.max(vA.y, vB.y, vC.y);
-    triangles.push({ a: vA.clone(), b: vB.clone(), c: vC.clone(), minY, maxY });
+  rootObj.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return;
+
+    const geo = child.geometry;
+    const posAttr = geo.attributes.position;
+    if (!posAttr) return;
+
+    const colorAttr = geo.attributes.color;
+    const isIndexed = geo.index !== null;
+    const triCount = isIndexed ? geo.index.count / 3 : posAttr.count / 3;
+
+    // Determine mesh material color if no vertex colors exist
+    let meshMatColor = null;
+    const mat = Array.isArray(child.material) ? child.material[0] : child.material;
+    if (mat && mat.color) {
+      const hex = mat.color.getHex();
+      // 3MFLoader defaults unassigned meshes to pure white (0xffffff) or light gray
+      if (hex !== 0xffffff) {
+        meshMatColor = mat.color.clone();
+        foundEmbeddedColors = true;
+      }
+    }
+
+    if (colorAttr) {
+      foundEmbeddedColors = true;
+    }
+
+    const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+    const cA = new THREE.Color(), cB = new THREE.Color(), cC = new THREE.Color();
+
+    for (let i = 0; i < triCount; i++) {
+      const i0 = isIndexed ? geo.index.getX(i * 3) : i * 3;
+      const i1 = isIndexed ? geo.index.getX(i * 3 + 1) : i * 3 + 1;
+      const i2 = isIndexed ? geo.index.getX(i * 3 + 2) : i * 3 + 2;
+
+      vA.fromBufferAttribute(posAttr, i0).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
+      vB.fromBufferAttribute(posAttr, i1).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
+      vC.fromBufferAttribute(posAttr, i2).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
+
+      let triColor = null;
+      if (colorAttr) {
+        cA.fromBufferAttribute(colorAttr, i0);
+        cB.fromBufferAttribute(colorAttr, i1);
+        cC.fromBufferAttribute(colorAttr, i2);
+        triColor = new THREE.Color(
+          (cA.r + cB.r + cC.r) / 3,
+          (cA.g + cB.g + cC.g) / 3,
+          (cA.b + cB.b + cC.b) / 3
+        );
+      } else if (meshMatColor) {
+        triColor = meshMatColor;
+      }
+
+      triangles.push({
+        a: vA.clone(),
+        b: vB.clone(),
+        c: vC.clone(),
+        color: triColor
+      });
+    }
+  });
+
+  currentModelTriangles = triangles;
+  currentModelHasEmbeddedColors = foundEmbeddedColors;
+  updateMulticolorUIState();
+  sliceCurrentModel();
+}
+
+function updateMulticolorUIState() {
+  const badge = document.getElementById('multicolorBadge');
+  const use3mfGroup = document.getElementById('use3mfColorsGroup');
+  if (currentModelHasEmbeddedColors) {
+    badge.style.display = 'inline-block';
+    use3mfGroup.style.display = 'flex';
+  } else {
+    badge.style.display = 'none';
+    use3mfGroup.style.display = 'none';
   }
+}
 
+// --- GEOMETRIC SLICER WITH USER SCALE & ROTATION ---
+function sliceCurrentModel() {
+  if (!currentModelTriangles || currentModelTriangles.length === 0) return;
+
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(appState.rotX),
+    THREE.MathUtils.degToRad(appState.rotY),
+    THREE.MathUtils.degToRad(appState.rotZ),
+    'XYZ'
+  );
+  const rotQuat = new THREE.Quaternion().setFromEuler(euler);
+
+  // First pass: rotate triangles and compute bounding box
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+
+  const rotatedTris = currentModelTriangles.map(tri => {
+    const a = tri.a.clone().applyQuaternion(rotQuat);
+    const b = tri.b.clone().applyQuaternion(rotQuat);
+    const c = tri.c.clone().applyQuaternion(rotQuat);
+
+    minX = Math.min(minX, a.x, b.x, c.x);
+    maxX = Math.max(maxX, a.x, b.x, c.x);
+    minY = Math.min(minY, a.y, b.y, c.y);
+    maxY = Math.max(maxY, a.y, b.y, c.y);
+    minZ = Math.min(minZ, a.z, b.z, c.z);
+    maxZ = Math.max(maxZ, a.z, b.z, c.z);
+
+    return { a, b, c, color: tri.color };
+  });
+
+  const sizeX = maxX - minX;
+  const sizeY = maxY - minY;
+  const sizeZ = maxZ - minZ;
+  const maxDim = Math.max(sizeX, sizeY, sizeZ, 1e-4);
+
+  const baseTargetSize = 95;
+  const scaleFactor = (baseTargetSize / maxDim) * (appState.modelScale / 100);
+  const centerX = (minX + maxX) * 0.5;
+  const centerZ = (minZ + maxZ) * 0.5;
+
+  const transformedTris = rotatedTris.map(tri => {
+    const a = new THREE.Vector3(
+      (tri.a.x - centerX) * scaleFactor,
+      (tri.a.y - minY) * scaleFactor,
+      (tri.a.z - centerZ) * scaleFactor
+    );
+    const b = new THREE.Vector3(
+      (tri.b.x - centerX) * scaleFactor,
+      (tri.b.y - minY) * scaleFactor,
+      (tri.b.z - centerZ) * scaleFactor
+    );
+    const c = new THREE.Vector3(
+      (tri.c.x - centerX) * scaleFactor,
+      (tri.c.y - minY) * scaleFactor,
+      (tri.c.z - centerZ) * scaleFactor
+    );
+
+    return {
+      a,
+      b,
+      c,
+      color: tri.color,
+      minY: Math.min(a.y, b.y, c.y),
+      maxY: Math.max(a.y, b.y, c.y)
+    };
+  });
+
+  const modelHeight = sizeY * scaleFactor;
   const numLayers = Math.max(1, Math.floor(modelHeight / LAYER_HEIGHT));
   const positions = [];
+  const colors = [];
   toolpathPoints = [];
   layerStartIndices = [];
 
+  const fallbackColor = new THREE.Color(appState.filamentColor);
+
   for (let l = 0; l < numLayers; l++) {
     const sliceY = (l + 0.5) * LAYER_HEIGHT;
-    const rawSegments = [];
+    const rawSegObjs = [];
 
-    for (let t = 0; t < triangles.length; t++) {
-      const tri = triangles[t];
+    for (let t = 0; t < transformedTris.length; t++) {
+      const tri = transformedTris[t];
       if (sliceY < tri.minY || sliceY > tri.maxY) continue;
 
       const pts = [];
@@ -648,34 +810,37 @@ function sliceGeometry(rawGeometry) {
       intersectEdge(tri.c, tri.a, sliceY, pts);
 
       if (pts.length >= 2) {
-        rawSegments.push([pts[0], pts[1]]);
+        const segColor = (currentModelHasEmbeddedColors && use3mfColors && tri.color)
+          ? tri.color
+          : fallbackColor;
+        rawSegObjs.push({ p1: pts[0], p2: pts[1], color: segColor });
       }
     }
 
-    if (rawSegments.length === 0) continue;
+    if (rawSegObjs.length === 0) continue;
 
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
 
-    const orderedPerimeter = orderSegments(rawSegments);
+    const orderedPerimeter = orderSegmentObjects(rawSegObjs);
     let subdividedInfill = [];
 
     if (isInfillEnabled) {
-      const rawInfill = generateLayerInfill(rawSegments, sliceY, l, infillDensity);
+      const rawInfill = generateLayerInfill(rawSegObjs, sliceY, l, infillDensity, fallbackColor);
       if (rawInfill.length > 0) {
-        const orderedInfill = orderSegments(rawInfill);
-        for (const [p1, p2] of orderedInfill) {
-          subdividedInfill.push(...subdivideSegment(p1, p2, 2.2));
+        const orderedInfill = orderSegmentObjects(rawInfill);
+        for (const seg of orderedInfill) {
+          subdividedInfill.push(...subdivideSegment(seg, 2.2));
         }
       }
     }
 
     const combined = [...orderedPerimeter, ...subdividedInfill];
 
-    combined.forEach(([p1, p2]) => {
-      if (appendBeadTriangles(p1, p2, BEAD_RADIUS, positions)) {
+    combined.forEach((seg) => {
+      if (appendBeadTriangles(seg.p1, seg.p2, BEAD_RADIUS, seg.color, positions, colors)) {
         toolpathPoints.push({
-          start: p1,
-          end: p2,
+          start: seg.p1,
+          end: seg.p2,
           layer: l + 1
         });
       }
@@ -689,6 +854,7 @@ function sliceGeometry(rawGeometry) {
 
   const meshGeo = new THREE.BufferGeometry();
   meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  meshGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   meshGeo.computeVertexNormals();
   meshGeo.setDrawRange(0, 0);
 
@@ -715,20 +881,20 @@ function intersectEdge(p1, p2, y, outPts) {
   }
 }
 
-function orderSegments(segments) {
+function orderSegmentObjects(segObjs) {
   const result = [];
-  const used = new Uint8Array(segments.length);
-  let currentPos = segments[0][0];
+  const used = new Uint8Array(segObjs.length);
+  let currentPos = segObjs[0].p1;
 
-  for (let i = 0; i < segments.length; i++) {
+  for (let i = 0; i < segObjs.length; i++) {
     let bestIdx = -1;
     let bestDist = Infinity;
     let flip = false;
 
-    for (let j = 0; j < segments.length; j++) {
+    for (let j = 0; j < segObjs.length; j++) {
       if (used[j]) continue;
-      const d0 = currentPos.distanceToSquared(segments[j][0]);
-      const d1 = currentPos.distanceToSquared(segments[j][1]);
+      const d0 = currentPos.distanceToSquared(segObjs[j].p1);
+      const d1 = currentPos.distanceToSquared(segObjs[j].p2);
       if (d0 < bestDist) {
         bestDist = d0;
         bestIdx = j;
@@ -743,26 +909,38 @@ function orderSegments(segments) {
 
     if (bestIdx === -1) break;
     used[bestIdx] = 1;
-    const seg = flip ? [segments[bestIdx][1], segments[bestIdx][0]] : segments[bestIdx];
+    const chosen = segObjs[bestIdx];
+    const seg = flip
+      ? { p1: chosen.p2, p2: chosen.p1, color: chosen.color }
+      : chosen;
     result.push(seg);
-    currentPos = seg[1];
+    currentPos = seg.p2;
   }
   return result;
 }
 
 function loadDefaultModel() {
   const geo = new THREE.TorusKnotGeometry(28, 9, 120, 20, 2, 3);
-  geo.rotateX(Math.PI / 2);
-  sliceGeometry(geo);
+  const mesh = new THREE.Mesh(geo);
+  extractTrianglesFromObject3D(mesh, 0);
 }
 
-// --- STL FILE LOADING & PERSISTENCE ---
+// --- .STL & .3MF FILE LOADING + PERSISTENCE ---
 const stlLoader = new STLLoader();
-const stlInput = document.getElementById('stlInput');
+const threeMFLoader = new ThreeMFLoader();
+const modelInput = document.getElementById('modelInput');
 
-function loadSTLFromBuffer(buffer, saveToStorage = true) {
-  const geometry = stlLoader.parse(buffer);
-  sliceGeometry(geometry);
+function loadModelFromBuffer(buffer, fileName, saveToStorage = true) {
+  const lowerName = fileName.toLowerCase();
+
+  if (lowerName.endsWith('.3mf')) {
+    const group = threeMFLoader.parse(buffer);
+    extractTrianglesFromObject3D(group, -Math.PI / 2);
+  } else {
+    const geometry = stlLoader.parse(buffer);
+    const mesh = new THREE.Mesh(geometry);
+    extractTrianglesFromObject3D(mesh, -Math.PI / 2);
+  }
 
   if (saveToStorage) {
     try {
@@ -772,36 +950,40 @@ function loadSTLFromBuffer(buffer, saveToStorage = true) {
       for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
       }
-      localStorage.setItem('savedCustomSTL', btoa(binary));
+      localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify({
+        name: fileName,
+        data: btoa(binary)
+      }));
     } catch (e) {
-      // Ignore storage quota error if STL file is very large
+      // Ignore storage quota error if model file is very large
     }
   }
 }
 
 (function initInitialModel() {
-  const savedBase64 = localStorage.getItem('savedCustomSTL');
-  if (savedBase64) {
+  const savedRaw = localStorage.getItem(MODEL_STORAGE_KEY);
+  if (savedRaw) {
     try {
-      const binary = atob(savedBase64);
+      const parsed = JSON.parse(savedRaw);
+      const binary = atob(parsed.data);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
       }
-      loadSTLFromBuffer(bytes.buffer, false);
+      loadModelFromBuffer(bytes.buffer, parsed.name || 'model.stl', false);
       return;
     } catch (e) {
-      localStorage.removeItem('savedCustomSTL');
+      localStorage.removeItem(MODEL_STORAGE_KEY);
     }
   }
   loadDefaultModel();
 })();
 
-stlInput.addEventListener('change', (e) => {
+modelInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = (ev) => loadSTLFromBuffer(ev.target.result, true);
+  reader.onload = (ev) => loadModelFromBuffer(ev.target.result, file.name, true);
   reader.readAsArrayBuffer(file);
   e.target.value = '';
 });
@@ -810,9 +992,11 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => {
   e.preventDefault();
   const file = e.dataTransfer.files[0];
-  if (file && file.name.toLowerCase().endsWith('.stl')) {
+  if (!file) return;
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith('.stl') || lower.endsWith('.3mf')) {
     const reader = new FileReader();
-    reader.onload = (ev) => loadSTLFromBuffer(ev.target.result, true);
+    reader.onload = (ev) => loadModelFromBuffer(ev.target.result, file.name, true);
     reader.readAsArrayBuffer(file);
   }
 });
@@ -838,6 +1022,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(btn.getAttribute('data-tab')).classList.add('active');
+  });
+});
+
+// --- FIX COLOR PICKER FOCUS IN WALLPAPER ENGINE ---
+document.querySelectorAll('input[type="color"]').forEach(colorEl => {
+  colorEl.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    window.focus();
+  });
+  colorEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.focus();
   });
 });
 
@@ -920,11 +1116,11 @@ const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
 
 zoomInBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput.zoomVel = -1; });
-zoomInBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
+zoomInBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; scheduleCameraSave(); });
 zoomInBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
 
 zoomOutBtn.addEventListener('pointerdown', () => { if (!isCameraLocked) joyInput.zoomVel = 1; });
-zoomOutBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; });
+zoomOutBtn.addEventListener('pointerup', () => { joyInput.zoomVel = 0; scheduleCameraSave(); });
 zoomOutBtn.addEventListener('pointerleave', () => { joyInput.zoomVel = 0; });
 
 document.querySelectorAll('#tab-camera button[data-cam]').forEach(btn => {
@@ -963,8 +1159,9 @@ function setCameraLocked(locked, persist = true) {
 lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked, true));
 lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked, true));
 
-// --- CUSTOMIZATION CONTROLS ---
+// --- CUSTOMIZATION & MODEL TRANSFORM CONTROLS ---
 const filamentInput = document.getElementById('filamentColor');
+const use3mfColorsToggle = document.getElementById('use3mfColorsToggle');
 const infillToggle = document.getElementById('infillToggle');
 const infillDensityGroup = document.getElementById('infillDensityGroup');
 const infillSlider = document.getElementById('infillSlider');
@@ -980,10 +1177,19 @@ const reverseLoopToggle = document.getElementById('reverseLoopToggle');
 const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
 const rotateSpeedVal = document.getElementById('rotateSpeedVal');
 
+const modelScaleSlider = document.getElementById('modelScaleSlider');
+const modelScaleVal = document.getElementById('modelScaleVal');
+const rotXSlider = document.getElementById('rotXSlider');
+const rotXVal = document.getElementById('rotXVal');
+const rotYSlider = document.getElementById('rotYSlider');
+const rotYVal = document.getElementById('rotYVal');
+const rotZSlider = document.getElementById('rotZSlider');
+const rotZVal = document.getElementById('rotZVal');
+
 function reslicePreservingProgress() {
-  if (!currentRawGeometry) return;
+  if (!currentModelTriangles || currentModelTriangles.length === 0) return;
   const prevProgress = totalSegments > 0 ? currentSegmentFloat / totalSegments : 0;
-  sliceGeometry(currentRawGeometry);
+  sliceCurrentModel();
   currentSegmentFloat = prevProgress * totalSegments;
 }
 
@@ -1013,9 +1219,11 @@ function updateSpeed(newSpeed, persist = true) {
 function setFilamentColorHex(hex, persist = true) {
   appState.filamentColor = hex;
   filamentInput.value = hex;
-  filamentMaterial.color.set(hex);
+  if (!currentModelHasEmbeddedColors || !use3mfColors) {
+    reslicePreservingProgress();
+  }
   if (isNightMode) {
-    filamentMaterial.emissive.set(hex);
+    filamentMaterial.emissive.set(currentModelHasEmbeddedColors && use3mfColors ? '#334155' : hex);
   }
   if (persist) saveSettings();
 }
@@ -1064,8 +1272,25 @@ function setRotateSpeed(val, persist = true) {
   if (persist) saveSettings();
 }
 
+function updateTransformUI() {
+  modelScaleSlider.value = appState.modelScale;
+  modelScaleVal.textContent = `${appState.modelScale}%`;
+  rotXSlider.value = appState.rotX;
+  rotXVal.textContent = `${appState.rotX}°`;
+  rotYSlider.value = appState.rotY;
+  rotYVal.textContent = `${appState.rotY}°`;
+  rotZSlider.value = appState.rotZ;
+  rotZVal.textContent = `${appState.rotZ}°`;
+}
+
+function wrapAngleDeg(deg) {
+  let a = ((deg + 180) % 360 + 360) % 360 - 180;
+  return a === -180 && deg > 0 ? 180 : a;
+}
+
 // Apply all saved settings to UI and 3D scene immediately on startup
 (function applySavedStateOnBoot() {
+  use3mfColorsToggle.checked = appState.use3mfColors;
   setFilamentColorHex(appState.filamentColor, false);
   setPrinterColorHex(appState.printerColor, false);
   setChassisOpacity(appState.chassisOpacity, false);
@@ -1079,6 +1304,7 @@ function setRotateSpeed(val, persist = true) {
   setAutoRotate(appState.autoRotate, false);
   setRotateSpeed(appState.rotateSpeed, false);
   setCameraLocked(appState.lockCamera, false);
+  updateTransformUI();
 })();
 
 playPauseBtn.addEventListener('click', () => {
@@ -1095,6 +1321,13 @@ nightModeToggle.addEventListener('change', (e) => setNightMode(e.target.checked,
 reverseLoopToggle.addEventListener('change', (e) => setReverseLoop(e.target.checked, true));
 
 filamentInput.addEventListener('input', (e) => setFilamentColorHex(e.target.value, true));
+
+use3mfColorsToggle.addEventListener('change', (e) => {
+  use3mfColors = e.target.checked;
+  appState.use3mfColors = use3mfColors;
+  reslicePreservingProgress();
+  saveSettings();
+});
 
 infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked, true));
 
@@ -1126,6 +1359,59 @@ rotateSpeedSlider.addEventListener('input', (e) => {
   setRotateSpeed(parseFloat(e.target.value), true);
 });
 
+// Model Scale & Rotation listeners
+modelScaleSlider.addEventListener('input', (e) => {
+  appState.modelScale = parseInt(e.target.value, 10);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+rotXSlider.addEventListener('input', (e) => {
+  appState.rotX = parseInt(e.target.value, 10);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+rotYSlider.addEventListener('input', (e) => {
+  appState.rotY = parseInt(e.target.value, 10);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+rotZSlider.addEventListener('input', (e) => {
+  appState.rotZ = parseInt(e.target.value, 10);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+document.getElementById('rotX90Btn').addEventListener('click', () => {
+  appState.rotX = wrapAngleDeg(appState.rotX + 90);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+document.getElementById('rotZ90Btn').addEventListener('click', () => {
+  appState.rotZ = wrapAngleDeg(appState.rotZ + 90);
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
+document.getElementById('resetTransformBtn').addEventListener('click', () => {
+  appState.modelScale = 100;
+  appState.rotX = 0;
+  appState.rotY = 0;
+  appState.rotZ = 0;
+  updateTransformUI();
+  reslicePreservingProgress();
+  saveSettings();
+});
+
 // --- WALLPAPER ENGINE INTEGRATION ---
 function weColorToHex(weColorString) {
   const rgb = weColorString.split(' ').map(Number);
@@ -1143,7 +1429,6 @@ window.wallpaperPropertyListener = {
       }
     }
 
-    // Ignore Wallpaper Engine's initial default property bursts during the first 1.5s if user has saved settings
     const isDuringBootBurst = (performance.now() - BOOT_TIMESTAMP) < 1500;
     if (isDuringBootBurst && hasPersistedSettings()) {
       return;
@@ -1244,6 +1529,7 @@ function applySmoothJoystickCamera(dt) {
 
   controls.target.addScaledVector(up, -joySmooth.panY * panSpeed);
   camera.position.addScaledVector(up, -joySmooth.panY * panSpeed);
+  scheduleCameraSave();
 }
 
 function animate() {
