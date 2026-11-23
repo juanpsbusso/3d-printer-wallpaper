@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+import { unzipSync, strFromU8 } from 'fflate';
 
 // --- GENERAL CONFIGURATION & PERSISTENT STATE ---
 const BED_SIZE = 160;
@@ -83,7 +83,7 @@ let isReverseLoop = appState.reverseLoop;
 let printDirection = 1;
 let isCameraLocked = appState.lockCamera;
 let isNightMode = appState.nightMode;
-let currentModelTriangles = []; // Normalized triangle list { a, b, c, color }
+let currentModelTriangles = [];
 let currentModelHasEmbeddedColors = false;
 let userBgColor = appState.bgColor;
 
@@ -117,7 +117,6 @@ controls.maxDistance = 650;
 controls.autoRotate = appState.autoRotate;
 controls.autoRotateSpeed = appState.rotateSpeed;
 
-// Restore saved camera position & target
 if (Array.isArray(appState.camPos) && appState.camPos.length === 3) {
   camera.position.set(appState.camPos[0], appState.camPos[1], appState.camPos[2]);
 }
@@ -202,7 +201,6 @@ const bedNeonMaterial = new THREE.MeshBasicMaterial({
   opacity: 0.0
 });
 
-// Uses vertexColors so each bead can carry its own .3MF color or the global filament color
 const filamentMaterial = new THREE.MeshStandardMaterial({
   color: '#ffffff',
   vertexColors: true,
@@ -373,7 +371,6 @@ toolhead.add(nozzleLight);
 
 gantryBridge.add(toolhead);
 
-// Camera framing presets
 function applyCameraPreset(view) {
   const focusY = BED_SURFACE_Y + 38;
 
@@ -391,7 +388,6 @@ function applyCameraPreset(view) {
   scheduleCameraSave();
 }
 
-// Frame transparency control
 function setChassisOpacity(alpha, persist = true) {
   const val = Math.max(0.0, Math.min(1.0, alpha));
   appState.chassisOpacity = val;
@@ -546,7 +542,6 @@ function appendBeadTriangles(p1, p2, radius, color, outPositions, outColors) {
   return true;
 }
 
-// --- SUBDIVIDE LONG TOOLPATH MOVES FOR SMOOTH NOZZLE ANIMATION ---
 function subdivideSegment(segObj, maxStep = 2.2) {
   const { p1, p2, color } = segObj;
   const dist = p1.distanceTo(p2);
@@ -565,7 +560,6 @@ function subdivideSegment(segObj, maxStep = 2.2) {
   return subSegs;
 }
 
-// --- RECTILINEAR INFILL GENERATOR (±45°) ---
 function generateLayerInfill(perimeterSegObjs, sliceY, layerIndex, densityPercent, fallbackColor) {
   if (!isInfillEnabled || densityPercent <= 0 || perimeterSegObjs.length < 3) return [];
 
@@ -630,78 +624,251 @@ function generateLayerInfill(perimeterSegObjs, sliceY, layerIndex, densityPercen
   return infillSegs;
 }
 
-// --- EXTRACT TRIANGLES & COLORS FROM ANY GEOMETRY OR .3MF GROUP ---
-function extractTrianglesFromObject3D(rootObj, defaultRotationX = -Math.PI / 2) {
-  const triangles = [];
-  let foundEmbeddedColors = false;
+// --- ROBUST .3MF PARSER (SUPPORTS BAMBU STUDIO, ORCASLICER, PRUSASLICER & STANDARD 3MF) ---
+function parse3MFTransformMatrix(transformStr) {
+  const mat = new THREE.Matrix4();
+  if (!transformStr) return mat;
+  const nums = transformStr.trim().split(/\s+/).map(Number);
+  if (nums.length === 12) {
+    // 3MF stores a 4x3 row-major affine matrix: m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32
+    mat.set(
+      nums[0], nums[3], nums[6], nums[9],
+      nums[1], nums[4], nums[7], nums[10],
+      nums[2], nums[5], nums[8], nums[11],
+      0,       0,       0,       1
+    );
+  }
+  return mat;
+}
 
-  const baseRotMatrix = new THREE.Matrix4().makeRotationX(defaultRotationX);
-  rootObj.updateMatrixWorld(true);
+function parseHexColor3MF(hexStr) {
+  if (!hexStr) return null;
+  const clean = hexStr.trim().replace(/^#/, '');
+  if (clean.length >= 6) {
+    return new THREE.Color('#' + clean.slice(0, 6));
+  }
+  return null;
+}
 
-  rootObj.traverse((child) => {
-    if (!child.isMesh || !child.geometry) return;
+function parse3MFBuffer(buffer) {
+  const files = unzipSync(new Uint8Array(buffer));
+  const parser = new DOMParser();
 
-    const geo = child.geometry;
-    const posAttr = geo.attributes.position;
-    if (!posAttr) return;
-
-    const colorAttr = geo.attributes.color;
-    const isIndexed = geo.index !== null;
-    const triCount = isIndexed ? geo.index.count / 3 : posAttr.count / 3;
-
-    // Determine mesh material color if no vertex colors exist
-    let meshMatColor = null;
-    const mat = Array.isArray(child.material) ? child.material[0] : child.material;
-    if (mat && mat.color) {
-      const hex = mat.color.getHex();
-      // 3MFLoader defaults unassigned meshes to pure white (0xffffff) or light gray
-      if (hex !== 0xffffff) {
-        meshMatColor = mat.color.clone();
-        foundEmbeddedColors = true;
-      }
+  // Read slicer extruder/filament colors from Metadata if available (Bambu / Orca / Prusa)
+  const slicerPalette = [];
+  for (const [path, data] of Object.entries(files)) {
+    const lowerPath = path.toLowerCase();
+    if (lowerPath.endsWith('project_settings.config') || lowerPath.endsWith('model_settings.config')) {
+      try {
+        const text = strFromU8(data);
+        // Extract filament_colour array from JSON or INI config
+        const jsonMatch = text.match(/"filament_colour"\s*:\s*\[([^\]]+)\]/);
+        if (jsonMatch) {
+          const hexes = jsonMatch[1].match(/#[0-9a-fA-F]{6}/g);
+          if (hexes) hexes.forEach(h => slicerPalette.push(new THREE.Color(h)));
+        }
+      } catch (e) { /* ignore */ }
     }
+  }
 
-    if (colorAttr) {
-      foundEmbeddedColors = true;
+  // Parse all .model XML files inside the 3MF archive
+  const modelDocs = {};
+  for (const [path, data] of Object.entries(files)) {
+    if (path.toLowerCase().endsWith('.model')) {
+      const normalizedPath = path.replace(/^\/+/, '');
+      const xmlText = strFromU8(data);
+      modelDocs[normalizedPath] = parser.parseFromString(xmlText, 'application/xml');
     }
+  }
 
-    const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
-    const cA = new THREE.Color(), cB = new THREE.Color(), cC = new THREE.Color();
+  const rootPath = Object.keys(modelDocs).find(p => p.toLowerCase() === '3d/3dmodel.model') || Object.keys(modelDocs)[0];
+  if (!rootPath) throw new Error('No .model file found inside .3mf archive');
 
-    for (let i = 0; i < triCount; i++) {
-      const i0 = isIndexed ? geo.index.getX(i * 3) : i * 3;
-      const i1 = isIndexed ? geo.index.getX(i * 3 + 1) : i * 3 + 1;
-      const i2 = isIndexed ? geo.index.getX(i * 3 + 2) : i * 3 + 2;
-
-      vA.fromBufferAttribute(posAttr, i0).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
-      vB.fromBufferAttribute(posAttr, i1).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
-      vC.fromBufferAttribute(posAttr, i2).applyMatrix4(child.matrixWorld).applyMatrix4(baseRotMatrix);
-
-      let triColor = null;
-      if (colorAttr) {
-        cA.fromBufferAttribute(colorAttr, i0);
-        cB.fromBufferAttribute(colorAttr, i1);
-        cC.fromBufferAttribute(colorAttr, i2);
-        triColor = new THREE.Color(
-          (cA.r + cB.r + cC.r) / 3,
-          (cA.g + cB.g + cC.g) / 3,
-          (cA.b + cB.b + cC.b) / 3
-        );
-      } else if (meshMatColor) {
-        triColor = meshMatColor;
-      }
-
-      triangles.push({
-        a: vA.clone(),
-        b: vB.clone(),
-        c: vC.clone(),
-        color: triColor
+  // Index materials & objects across all .model documents
+  const parsedModels = {};
+  for (const [docPath, doc] of Object.entries(modelDocs)) {
+    const baseMaterials = {};
+    doc.querySelectorAll('basematerials').forEach(bm => {
+      const id = bm.getAttribute('id');
+      const list = [];
+      bm.querySelectorAll('base').forEach(base => {
+        list.push(parseHexColor3MF(base.getAttribute('displaycolor')));
       });
-    }
+      baseMaterials[id] = list;
+    });
+
+    const colorGroups = {};
+    doc.querySelectorAll('colorgroup').forEach(cg => {
+      const id = cg.getAttribute('id');
+      const list = [];
+      cg.querySelectorAll('color').forEach(c => {
+        list.push(parseHexColor3MF(c.getAttribute('color')));
+      });
+      colorGroups[id] = list;
+    });
+
+    const objects = {};
+    doc.querySelectorAll('object').forEach(objEl => {
+      const id = objEl.getAttribute('id');
+      const pid = objEl.getAttribute('pid');
+      const pindex = parseInt(objEl.getAttribute('pindex') || '0', 10);
+
+      let objColor = null;
+      if (pid && baseMaterials[pid] && baseMaterials[pid][pindex]) {
+        objColor = baseMaterials[pid][pindex];
+      } else if (pid && colorGroups[pid] && colorGroups[pid][pindex]) {
+        objColor = colorGroups[pid][pindex];
+      }
+
+      // Extract mesh vertices & triangles
+      const meshEl = objEl.querySelector('mesh');
+      let vertices = [];
+      let tris = [];
+      if (meshEl) {
+        meshEl.querySelectorAll('vertices > vertex').forEach(v => {
+          vertices.push(new THREE.Vector3(
+            parseFloat(v.getAttribute('x') || '0'),
+            parseFloat(v.getAttribute('y') || '0'),
+            parseFloat(v.getAttribute('z') || '0')
+          ));
+        });
+
+        meshEl.querySelectorAll('triangles > triangle').forEach(t => {
+          const v1 = parseInt(t.getAttribute('v1'), 10);
+          const v2 = parseInt(t.getAttribute('v2'), 10);
+          const v3 = parseInt(t.getAttribute('v3'), 10);
+
+          const tPid = t.getAttribute('pid') || pid;
+          const tP1 = parseInt(t.getAttribute('p1') || pindex, 10);
+          const paintColor = t.getAttribute('paint_color');
+
+          let triColor = objColor;
+          if (tPid && baseMaterials[tPid] && baseMaterials[tPid][tP1]) {
+            triColor = baseMaterials[tPid][tP1];
+          } else if (tPid && colorGroups[tPid] && colorGroups[tPid][tP1]) {
+            triColor = colorGroups[tPid][tP1];
+          } else if (paintColor && slicerPalette.length > 0) {
+            // Bambu/Orca paint_color encodes extruder bitmask; map active slot to palette
+            const slotIdx = Math.min(slicerPalette.length - 1, Math.max(0, parseInt(paintColor, 16) % slicerPalette.length));
+            triColor = slicerPalette[slotIdx];
+          }
+
+          tris.push({ v1, v2, v3, color: triColor });
+        });
+      }
+
+      // Extract child components (assemblies / multi-part objects)
+      const components = [];
+      objEl.querySelectorAll('components > component').forEach(comp => {
+        const compObjId = comp.getAttribute('objectid');
+        const compPathAttr = comp.getAttribute('p:path') || comp.getAttributeNS('http://schemas.microsoft.com/3dmanufacturing/production/2015/06', 'path');
+        const targetDocPath = compPathAttr ? compPathAttr.replace(/^\/+/, '') : docPath;
+        const matrix = parse3MFTransformMatrix(comp.getAttribute('transform'));
+        components.push({ objectId: compObjId, docPath: targetDocPath, matrix });
+      });
+
+      objects[id] = { vertices, tris, components, objColor };
+    });
+
+    parsedModels[docPath] = { objects };
+  }
+
+  const rootModel = parsedModels[rootPath];
+  const rootDoc = modelDocs[rootPath];
+  const buildItems = [];
+  rootDoc.querySelectorAll('build > item').forEach(item => {
+    const objectId = item.getAttribute('objectid');
+    const itemPathAttr = item.getAttribute('p:path') || item.getAttributeNS('http://schemas.microsoft.com/3dmanufacturing/production/2015/06', 'path');
+    const targetDocPath = itemPathAttr ? itemPathAttr.replace(/^\/+/, '') : rootPath;
+    const matrix = parse3MFTransformMatrix(item.getAttribute('transform'));
+    buildItems.push({ objectId, docPath: targetDocPath, matrix });
   });
 
+  // Fallback if <build> has no items: render all top-level mesh objects
+  if (buildItems.length === 0) {
+    Object.keys(rootModel.objects).forEach(id => {
+      buildItems.push({ objectId: id, docPath: rootPath, matrix: new THREE.Matrix4() });
+    });
+  }
+
+  const finalTriangles = [];
+  let hasEmbeddedColors = false;
+  const baseRotMatrix = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+
+  function traverseObject(docPath, objectId, parentMatrix, partIdxFallback) {
+    const model = parsedModels[docPath];
+    if (!model || !model.objects[objectId]) return;
+    const obj = model.objects[objectId];
+
+    if (obj.tris.length > 0) {
+      const fullMatrix = new THREE.Matrix4().multiplyMatrices(baseRotMatrix, parentMatrix);
+      const fallbackPartColor = slicerPalette[partIdxFallback % Math.max(1, slicerPalette.length)] || null;
+
+      for (const t of obj.tris) {
+        const a = obj.vertices[t.v1].clone().applyMatrix4(fullMatrix);
+        const b = obj.vertices[t.v2].clone().applyMatrix4(fullMatrix);
+        const c = obj.vertices[t.v3].clone().applyMatrix4(fullMatrix);
+
+        let col = t.color || fallbackPartColor;
+        if (col && col.getHex() === 0xffffff && slicerPalette.length === 0) {
+          col = null; // Ignore default uncolored white
+        }
+        if (col) hasEmbeddedColors = true;
+
+        finalTriangles.push({ a, b, c, color: col });
+      }
+    }
+
+    obj.components.forEach((comp, idx) => {
+      const nextMatrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, comp.matrix);
+      traverseObject(comp.docPath, comp.objectId, nextMatrix, partIdxFallback + idx);
+    });
+  }
+
+  buildItems.forEach((item, idx) => {
+    traverseObject(item.docPath, item.objectId, item.matrix, idx);
+  });
+
+  if (finalTriangles.length === 0) {
+    throw new Error('Parsed 0 triangles from .3mf');
+  }
+
+  currentModelTriangles = finalTriangles;
+  currentModelHasEmbeddedColors = hasEmbeddedColors;
+  updateMulticolorUIState();
+  sliceCurrentModel();
+}
+
+// --- EXTRACT TRIANGLES FROM STL / THREE.JS MESH ---
+function extractTrianglesFromGeometry(geometry, defaultRotationX = -Math.PI / 2) {
+  const triangles = [];
+  const baseRotMatrix = new THREE.Matrix4().makeRotationX(defaultRotationX);
+  const posAttr = geometry.attributes.position;
+  if (!posAttr) return;
+
+  const isIndexed = geometry.index !== null;
+  const triCount = isIndexed ? geometry.index.count / 3 : posAttr.count / 3;
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+
+  for (let i = 0; i < triCount; i++) {
+    const i0 = isIndexed ? geometry.index.getX(i * 3) : i * 3;
+    const i1 = isIndexed ? geometry.index.getX(i * 3 + 1) : i * 3 + 1;
+    const i2 = isIndexed ? geometry.index.getX(i * 3 + 2) : i * 3 + 2;
+
+    vA.fromBufferAttribute(posAttr, i0).applyMatrix4(baseRotMatrix);
+    vB.fromBufferAttribute(posAttr, i1).applyMatrix4(baseRotMatrix);
+    vC.fromBufferAttribute(posAttr, i2).applyMatrix4(baseRotMatrix);
+
+    triangles.push({
+      a: vA.clone(),
+      b: vB.clone(),
+      c: vC.clone(),
+      color: null
+    });
+  }
+
   currentModelTriangles = triangles;
-  currentModelHasEmbeddedColors = foundEmbeddedColors;
+  currentModelHasEmbeddedColors = false;
   updateMulticolorUIState();
   sliceCurrentModel();
 }
@@ -730,7 +897,6 @@ function sliceCurrentModel() {
   );
   const rotQuat = new THREE.Quaternion().setFromEuler(euler);
 
-  // First pass: rotate triangles and compute bounding box
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
@@ -921,25 +1087,26 @@ function orderSegmentObjects(segObjs) {
 
 function loadDefaultModel() {
   const geo = new THREE.TorusKnotGeometry(28, 9, 120, 20, 2, 3);
-  const mesh = new THREE.Mesh(geo);
-  extractTrianglesFromObject3D(mesh, 0);
+  extractTrianglesFromGeometry(geo, 0);
 }
 
 // --- .STL & .3MF FILE LOADING + PERSISTENCE ---
 const stlLoader = new STLLoader();
-const threeMFLoader = new ThreeMFLoader();
 const modelInput = document.getElementById('modelInput');
 
 function loadModelFromBuffer(buffer, fileName, saveToStorage = true) {
   const lowerName = fileName.toLowerCase();
 
-  if (lowerName.endsWith('.3mf')) {
-    const group = threeMFLoader.parse(buffer);
-    extractTrianglesFromObject3D(group, -Math.PI / 2);
-  } else {
-    const geometry = stlLoader.parse(buffer);
-    const mesh = new THREE.Mesh(geometry);
-    extractTrianglesFromObject3D(mesh, -Math.PI / 2);
+  try {
+    if (lowerName.endsWith('.3mf')) {
+      parse3MFBuffer(buffer);
+    } else {
+      const geometry = stlLoader.parse(buffer);
+      extractTrianglesFromGeometry(geometry, -Math.PI / 2);
+    }
+  } catch (err) {
+    console.error('Error loading model:', err);
+    return;
   }
 
   if (saveToStorage) {
@@ -1288,7 +1455,6 @@ function wrapAngleDeg(deg) {
   return a === -180 && deg > 0 ? 180 : a;
 }
 
-// Apply all saved settings to UI and 3D scene immediately on startup
 (function applySavedStateOnBoot() {
   use3mfColorsToggle.checked = appState.use3mfColors;
   setFilamentColorHex(appState.filamentColor, false);
@@ -1359,7 +1525,6 @@ rotateSpeedSlider.addEventListener('input', (e) => {
   setRotateSpeed(parseFloat(e.target.value), true);
 });
 
-// Model Scale & Rotation listeners
 modelScaleSlider.addEventListener('input', (e) => {
   appState.modelScale = parseInt(e.target.value, 10);
   updateTransformUI();
