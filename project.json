@@ -1,6 +1,6 @@
 {
   "title": "3D Printer Simulator",
-  "description": "Interactive CoreXY 3D printing live wallpaper with Night Mode, reverse loop playback, 3D layer shading, analog camera joysticks, and custom .STL file support.",
+  "description": "Interactive CoreXY 3D printing live wallpaper with .3MF multicolor & .STL support, model scale/rotation, Night Mode, reverse loop playback, and persistent camera framing.",
   "type": "web",
   "file": "index.html",
   "general": {
@@ -8,7 +8,7 @@
     "properties": {
       "showwebmenu": {
         "order": 1,
-        "text": "Show Settings Gear Button (Load .STL inside)",
+        "text": "Show Settings Gear Button (Load .STL / .3MF inside)",
         "type": "bool",
         "value": true
       },
