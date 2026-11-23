@@ -54,8 +54,13 @@
         </div>
 
         <div class="control-group">
+          <label for="infillToggle">Print Infill</label>
+          <input type="checkbox" id="infillToggle" checked />
+        </div>
+
+        <div class="control-group" id="infillDensityGroup">
           <label for="infillSlider">Infill Density: <span id="infillVal">20%</span></label>
-          <input type="range" id="infillSlider" min="0" max="60" step="10" value="20" />
+          <input type="range" id="infillSlider" min="10" max="60" step="10" value="20" />
         </div>
 
         <div class="control-group">
