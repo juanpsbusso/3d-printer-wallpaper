@@ -2,27 +2,64 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
-// --- GENERAL CONFIGURATION ---
+// --- GENERAL CONFIGURATION & PERSISTENT STATE ---
 const BED_SIZE = 160;
 const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
 const BED_SURFACE_Y = 20;
+const SETTINGS_STORAGE_KEY = 'printerSimSettings_v1';
 
-let printSpeed = 1.0;
-let lastNonZeroSpeed = 1.0;
-let isInfillEnabled = true;
-let infillDensity = 20;
+const defaultSettings = {
+  filamentColor: '#00a8ff',
+  enableInfill: true,
+  infillDensity: 20,
+  printerColor: '#242730',
+  chassisOpacity: 0.35,
+  bgColor: '#0d0f14',
+  printSpeed: 1.0,
+  nightMode: false,
+  reverseLoop: true,
+  lockCamera: false,
+  autoRotate: true,
+  rotateSpeed: 0.5
+};
+
+function loadSavedSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return { ...defaultSettings };
+    return { ...defaultSettings, ...JSON.parse(raw) };
+  } catch (e) {
+    return { ...defaultSettings };
+  }
+}
+
+const appState = loadSavedSettings();
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(appState));
+  } catch (e) {
+    // Ignore storage quota errors
+  }
+}
+
+let printSpeed = appState.printSpeed;
+let lastNonZeroSpeed = appState.printSpeed > 0 ? appState.printSpeed : 1.0;
+let isInfillEnabled = appState.enableInfill;
+let infillDensity = appState.infillDensity;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
 let layerStartIndices = [];
 let toolpathPoints = [];
-let isReverseLoop = true;
+let isReverseLoop = appState.reverseLoop;
 let printDirection = 1;
-let isCameraLocked = false;
-let isNightMode = false;
+let isCameraLocked = appState.lockCamera;
+let isNightMode = appState.nightMode;
 let currentRawGeometry = null;
-let userBgColor = '#0d0f14';
+let userBgColor = appState.bgColor;
+let isInitialWEBoot = true;
 
 // --- SCENE, CAMERA & RENDERER ---
 const canvas = document.getElementById('canvas3d');
@@ -51,8 +88,8 @@ controls.zoomSpeed = 0.85;
 controls.panSpeed = 0.7;
 controls.minDistance = 75;
 controls.maxDistance = 650;
-controls.autoRotate = true;
-controls.autoRotateSpeed = 0.5;
+controls.autoRotate = appState.autoRotate;
+controls.autoRotateSpeed = appState.rotateSpeed;
 
 canvas.addEventListener('pointerdown', () => window.focus());
 
@@ -82,11 +119,11 @@ scene.add(bottomBounceLight);
 
 // --- MATERIALS ---
 const chassisMaterial = new THREE.MeshStandardMaterial({
-  color: '#242730',
+  color: appState.printerColor,
   roughness: 0.45,
   metalness: 0.65,
   transparent: true,
-  opacity: 0.35,
+  opacity: appState.chassisOpacity,
   depthWrite: false
 });
 
@@ -112,10 +149,10 @@ const bedNeonMaterial = new THREE.MeshBasicMaterial({
 });
 
 const filamentMaterial = new THREE.MeshStandardMaterial({
-  color: '#00a8ff',
+  color: appState.filamentColor,
   roughness: 0.36,
   metalness: 0.08,
-  emissive: '#00a8ff',
+  emissive: appState.filamentColor,
   emissiveIntensity: 0.0
 });
 
@@ -300,8 +337,11 @@ function applyCameraPreset(view) {
 applyCameraPreset('view-iso');
 
 // Frame transparency control
-function setChassisOpacity(alpha) {
+function setChassisOpacity(alpha, persist = true) {
   const val = Math.max(0.0, Math.min(1.0, alpha));
+  appState.chassisOpacity = val;
+  chassisOpacitySlider.value = val;
+  chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
 
   if (val <= 0.01) {
     frameStructureGroup.visible = false;
@@ -332,11 +372,14 @@ function setChassisOpacity(alpha) {
     heatsinkMaterial.depthWrite = val > 0.7;
     heatsinkMaterial.needsUpdate = true;
   }
+
+  if (persist) saveSettings();
 }
 
 // --- NIGHT MODE ---
-function setNightMode(enabled) {
+function setNightMode(enabled, persist = true) {
   isNightMode = enabled;
+  appState.nightMode = enabled;
   nightModeToggle.checked = enabled;
   nightModeBtn.classList.toggle('night-active', enabled);
 
@@ -408,6 +451,8 @@ function setNightMode(enabled) {
     nozzleLight.distance = 48;
     nozzle.material.emissiveIntensity = 0.15;
   }
+
+  if (persist) saveSettings();
 }
 
 let printedMesh = null;
@@ -603,7 +648,6 @@ function sliceGeometry(rawGeometry) {
       const rawInfill = generateLayerInfill(rawSegments, sliceY, l, infillDensity);
       if (rawInfill.length > 0) {
         const orderedInfill = orderSegments(rawInfill);
-        // Subdivide long rectilinear infill lines into short steps so the nozzle traces them smoothly
         for (const [p1, p2] of orderedInfill) {
           subdividedInfill.push(...subdivideSegment(p1, p2, 2.2));
         }
@@ -875,8 +919,9 @@ document.querySelectorAll('#tab-camera button[data-cam]').forEach(btn => {
   });
 });
 
-function setCameraLocked(locked) {
+function setCameraLocked(locked, persist = true) {
   isCameraLocked = locked;
+  appState.lockCamera = locked;
   controls.enabled = !locked;
   lockCameraToggle.checked = locked;
 
@@ -896,10 +941,12 @@ function setCameraLocked(locked) {
     autoRotateGroup.classList.remove('disabled');
     rotateSpeedGroup.classList.toggle('disabled', !autoRotateToggle.checked);
   }
+
+  if (persist) saveSettings();
 }
 
-lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked));
-lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked));
+lockCameraBtn.addEventListener('click', () => setCameraLocked(!isCameraLocked, true));
+lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.checked, true));
 
 // --- CUSTOMIZATION CONTROLS ---
 const filamentInput = document.getElementById('filamentColor');
@@ -925,15 +972,18 @@ function reslicePreservingProgress() {
   currentSegmentFloat = prevProgress * totalSegments;
 }
 
-function setInfillEnabled(enabled) {
+function setInfillEnabled(enabled, persist = true) {
   isInfillEnabled = enabled;
+  appState.enableInfill = enabled;
   infillToggle.checked = enabled;
   infillDensityGroup.classList.toggle('disabled', !enabled);
   reslicePreservingProgress();
+  if (persist) saveSettings();
 }
 
-function updateSpeed(newSpeed) {
+function updateSpeed(newSpeed, persist = true) {
   printSpeed = Math.max(0, newSpeed);
+  appState.printSpeed = printSpeed;
   if (printSpeed > 0) {
     lastNonZeroSpeed = printSpeed;
     playPauseBtn.textContent = '⏸️ Pause';
@@ -942,82 +992,137 @@ function updateSpeed(newSpeed) {
   }
   speedSlider.value = printSpeed;
   speedVal.textContent = `${printSpeed.toFixed(1)}x`;
+  if (persist) saveSettings();
 }
 
-playPauseBtn.addEventListener('click', () => {
-  if (printSpeed > 0) {
-    updateSpeed(0);
-  } else {
-    updateSpeed(lastNonZeroSpeed || 1.0);
-  }
-});
-
-nightModeBtn.addEventListener('click', () => setNightMode(!isNightMode));
-nightModeToggle.addEventListener('change', (e) => setNightMode(e.target.checked));
-
-reverseLoopToggle.addEventListener('change', (e) => {
-  isReverseLoop = e.target.checked;
-  if (!isReverseLoop) printDirection = 1;
-});
-
-filamentInput.addEventListener('input', (e) => {
-  filamentMaterial.color.set(e.target.value);
+function setFilamentColorHex(hex, persist = true) {
+  appState.filamentColor = hex;
+  filamentInput.value = hex;
+  filamentMaterial.color.set(hex);
   if (isNightMode) {
-    filamentMaterial.emissive.set(e.target.value);
+    filamentMaterial.emissive.set(hex);
   }
-});
+  if (persist) saveSettings();
+}
 
-infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked));
+function setPrinterColorHex(hex, persist = true) {
+  appState.printerColor = hex;
+  printerInput.value = hex;
+  chassisMaterial.color.set(hex);
+  if (persist) saveSettings();
+}
 
-infillSlider.addEventListener('input', (e) => {
-  infillDensity = parseInt(e.target.value, 10);
-  infillVal.textContent = `${infillDensity}%`;
-  if (isInfillEnabled) {
-    reslicePreservingProgress();
-  }
-});
-
-printerInput.addEventListener('input', (e) => chassisMaterial.color.set(e.target.value));
-
-chassisOpacitySlider.addEventListener('input', (e) => {
-  const val = parseFloat(e.target.value);
-  setChassisOpacity(val);
-  chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
-});
-
-bgInput.addEventListener('input', (e) => {
-  userBgColor = e.target.value;
+function setBgColorHex(hex, persist = true) {
+  userBgColor = hex;
+  appState.bgColor = hex;
+  bgInput.value = hex;
   if (!isNightMode) {
     scene.background.set(userBgColor);
     scene.fog.color.set(userBgColor);
   }
+  if (persist) saveSettings();
+}
+
+function setReverseLoop(enabled, persist = true) {
+  isReverseLoop = enabled;
+  appState.reverseLoop = enabled;
+  reverseLoopToggle.checked = enabled;
+  if (!isReverseLoop) printDirection = 1;
+  if (persist) saveSettings();
+}
+
+function setAutoRotate(enabled, persist = true) {
+  appState.autoRotate = enabled;
+  autoRotateToggle.checked = enabled;
+  if (!isCameraLocked) {
+    controls.autoRotate = enabled;
+  }
+  rotateSpeedGroup.classList.toggle('disabled', !enabled);
+  if (persist) saveSettings();
+}
+
+function setRotateSpeed(val, persist = true) {
+  appState.rotateSpeed = val;
+  controls.autoRotateSpeed = val;
+  rotateSpeedSlider.value = val;
+  rotateSpeedVal.textContent = val.toFixed(1);
+  if (persist) saveSettings();
+}
+
+// Apply all saved settings to UI and 3D scene immediately on startup
+(function applySavedStateOnBoot() {
+  setFilamentColorHex(appState.filamentColor, false);
+  setPrinterColorHex(appState.printerColor, false);
+  setChassisOpacity(appState.chassisOpacity, false);
+  setBgColorHex(appState.bgColor, false);
+  infillSlider.value = appState.infillDensity;
+  infillVal.textContent = `${appState.infillDensity}%`;
+  setInfillEnabled(appState.enableInfill, false);
+  updateSpeed(appState.printSpeed, false);
+  setNightMode(appState.nightMode, false);
+  setReverseLoop(appState.reverseLoop, false);
+  setAutoRotate(appState.autoRotate, false);
+  setRotateSpeed(appState.rotateSpeed, false);
+  setCameraLocked(appState.lockCamera, false);
+})();
+
+playPauseBtn.addEventListener('click', () => {
+  if (printSpeed > 0) {
+    updateSpeed(0, true);
+  } else {
+    updateSpeed(lastNonZeroSpeed || 1.0, true);
+  }
 });
+
+nightModeBtn.addEventListener('click', () => setNightMode(!isNightMode, true));
+nightModeToggle.addEventListener('change', (e) => setNightMode(e.target.checked, true));
+
+reverseLoopToggle.addEventListener('change', (e) => setReverseLoop(e.target.checked, true));
+
+filamentInput.addEventListener('input', (e) => setFilamentColorHex(e.target.value, true));
+
+infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked, true));
+
+infillSlider.addEventListener('input', (e) => {
+  infillDensity = parseInt(e.target.value, 10);
+  appState.infillDensity = infillDensity;
+  infillVal.textContent = `${infillDensity}%`;
+  if (isInfillEnabled) {
+    reslicePreservingProgress();
+  }
+  saveSettings();
+});
+
+printerInput.addEventListener('input', (e) => setPrinterColorHex(e.target.value, true));
+
+chassisOpacitySlider.addEventListener('input', (e) => {
+  setChassisOpacity(parseFloat(e.target.value), true);
+});
+
+bgInput.addEventListener('input', (e) => setBgColorHex(e.target.value, true));
 
 speedSlider.addEventListener('input', (e) => {
-  updateSpeed(parseFloat(e.target.value));
+  updateSpeed(parseFloat(e.target.value), true);
 });
 
-autoRotateToggle.addEventListener('change', (e) => {
-  if (!isCameraLocked) {
-    controls.autoRotate = e.target.checked;
-  }
-  rotateSpeedGroup.classList.toggle('disabled', !e.target.checked);
-});
+autoRotateToggle.addEventListener('change', (e) => setAutoRotate(e.target.checked, true));
 
 rotateSpeedSlider.addEventListener('input', (e) => {
-  const val = parseFloat(e.target.value);
-  controls.autoRotateSpeed = val;
-  rotateSpeedVal.textContent = val.toFixed(1);
+  setRotateSpeed(parseFloat(e.target.value), true);
 });
 
 // --- WALLPAPER ENGINE INTEGRATION ---
-function weColorToThree(weColorString) {
+function weColorToHex(weColorString) {
   const rgb = weColorString.split(' ').map(Number);
-  return new THREE.Color(rgb[0], rgb[1], rgb[2]);
+  return '#' + new THREE.Color(rgb[0], rgb[1], rgb[2]).getHexString();
 }
 
 window.wallpaperPropertyListener = {
   applyUserProperties: function (properties) {
+    // On initial boot, Wallpaper Engine sends default project.json values.
+    // Skip overwriting user's saved gear-menu settings on boot, but apply live changes if adjusted in WE's right sidebar.
+    const skipIfBootWithSaved = isInitialWEBoot && localStorage.getItem(SETTINGS_STORAGE_KEY) !== null;
+
     if (properties.showwebmenu !== undefined) {
       const show = properties.showwebmenu.value;
       toggleUiBtn.classList.toggle('hidden-completely', !show);
@@ -1026,69 +1131,52 @@ window.wallpaperPropertyListener = {
         toggleUiBtn.classList.remove('active');
       }
     }
-    if (properties.nightmode !== undefined) {
-      setNightMode(properties.nightmode.value);
-    }
-    if (properties.reverseloop !== undefined) {
-      isReverseLoop = properties.reverseloop.value;
-      reverseLoopToggle.checked = isReverseLoop;
-      if (!isReverseLoop) printDirection = 1;
-    }
-    if (properties.lockcamera !== undefined) {
-      setCameraLocked(properties.lockcamera.value);
-    }
-    if (properties.filamentcolor) {
-      const c = weColorToThree(properties.filamentcolor.value);
-      filamentMaterial.color.copy(c);
-      if (isNightMode) filamentMaterial.emissive.copy(c);
-      filamentInput.value = '#' + c.getHexString();
-    }
-    if (properties.enableinfill !== undefined) {
-      setInfillEnabled(properties.enableinfill.value);
-    }
-    if (properties.infilldensity !== undefined) {
-      infillDensity = properties.infilldensity.value;
-      infillSlider.value = infillDensity;
-      infillVal.textContent = `${infillDensity}%`;
-      if (isInfillEnabled) {
-        reslicePreservingProgress();
+
+    if (!skipIfBootWithSaved) {
+      if (properties.nightmode !== undefined) {
+        setNightMode(properties.nightmode.value, true);
+      }
+      if (properties.reverseloop !== undefined) {
+        setReverseLoop(properties.reverseloop.value, true);
+      }
+      if (properties.lockcamera !== undefined) {
+        setCameraLocked(properties.lockcamera.value, true);
+      }
+      if (properties.filamentcolor) {
+        setFilamentColorHex(weColorToHex(properties.filamentcolor.value), true);
+      }
+      if (properties.enableinfill !== undefined) {
+        setInfillEnabled(properties.enableinfill.value, true);
+      }
+      if (properties.infilldensity !== undefined) {
+        infillDensity = properties.infilldensity.value;
+        appState.infillDensity = infillDensity;
+        infillSlider.value = infillDensity;
+        infillVal.textContent = `${infillDensity}%`;
+        if (isInfillEnabled) reslicePreservingProgress();
+        saveSettings();
+      }
+      if (properties.printercolor) {
+        setPrinterColorHex(weColorToHex(properties.printercolor.value), true);
+      }
+      if (properties.chassisopacity !== undefined) {
+        setChassisOpacity(properties.chassisopacity.value, true);
+      }
+      if (properties.bgcolor) {
+        setBgColorHex(weColorToHex(properties.bgcolor.value), true);
+      }
+      if (properties.printspeed !== undefined) {
+        updateSpeed(properties.printspeed.value, true);
+      }
+      if (properties.autorotate !== undefined) {
+        setAutoRotate(properties.autorotate.value, true);
+      }
+      if (properties.rotatespeed) {
+        setRotateSpeed(properties.rotatespeed.value, true);
       }
     }
-    if (properties.printercolor) {
-      const c = weColorToThree(properties.printercolor.value);
-      chassisMaterial.color.copy(c);
-      printerInput.value = '#' + c.getHexString();
-    }
-    if (properties.chassisopacity !== undefined) {
-      const val = properties.chassisopacity.value;
-      setChassisOpacity(val);
-      chassisOpacitySlider.value = val;
-      chassisOpacityVal.textContent = `${Math.round(val * 100)}%`;
-    }
-    if (properties.bgcolor) {
-      const c = weColorToThree(properties.bgcolor.value);
-      userBgColor = '#' + c.getHexString();
-      bgInput.value = userBgColor;
-      if (!isNightMode) {
-        scene.background.copy(c);
-        scene.fog.color.copy(c);
-      }
-    }
-    if (properties.printspeed !== undefined) {
-      updateSpeed(properties.printspeed.value);
-    }
-    if (properties.autorotate !== undefined) {
-      const enabled = properties.autorotate.value;
-      autoRotateToggle.checked = enabled;
-      if (!isCameraLocked) controls.autoRotate = enabled;
-      rotateSpeedGroup.classList.toggle('disabled', !enabled);
-    }
-    if (properties.rotatespeed) {
-      const val = properties.rotatespeed.value;
-      controls.autoRotateSpeed = val;
-      rotateSpeedSlider.value = val;
-      rotateSpeedVal.textContent = val.toFixed(1);
-    }
+
+    isInitialWEBoot = false;
   }
 };
 
