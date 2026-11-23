@@ -36,22 +36,28 @@
         "type": "color",
         "value": "0 0.66 1"
       },
-      "infilldensity": {
+      "enableinfill": {
         "order": 6,
+        "text": "Print Infill (Uncheck for Walls Only)",
+        "type": "bool",
+        "value": true
+      },
+      "infilldensity": {
+        "order": 7,
         "text": "Infill Density (%)",
         "type": "slider",
-        "min": 0,
+        "min": 10,
         "max": 60,
         "value": 20
       },
       "printercolor": {
-        "order": 7,
+        "order": 8,
         "text": "Frame Color",
         "type": "color",
         "value": "0.14 0.15 0.19"
       },
       "chassisopacity": {
-        "order": 8,
+        "order": 9,
         "text": "Frame Opacity",
         "type": "slider",
         "min": 0.0,
@@ -59,13 +65,13 @@
         "value": 0.35
       },
       "bgcolor": {
-        "order": 9,
+        "order": 10,
         "text": "Background Color",
         "type": "color",
         "value": "0.05 0.06 0.08"
       },
       "printspeed": {
-        "order": 10,
+        "order": 11,
         "text": "Print Speed (0 = Pause)",
         "type": "slider",
         "min": 0.0,
@@ -73,13 +79,13 @@
         "value": 1.0
       },
       "autorotate": {
-        "order": 11,
+        "order": 12,
         "text": "Auto Rotate Camera",
         "type": "bool",
         "value": true
       },
       "rotatespeed": {
-        "order": 12,
+        "order": 13,
         "text": "Camera Rotate Speed",
         "type": "slider",
         "min": 0.1,
