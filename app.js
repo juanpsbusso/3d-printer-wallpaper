@@ -11,6 +11,7 @@ const BED_SURFACE_Y = 20;
 
 let printSpeed = 1.0;
 let lastNonZeroSpeed = 1.0;
+let isInfillEnabled = true;
 let infillDensity = 20;
 let currentSegmentFloat = 0;
 let totalSegments = 0;
@@ -443,7 +444,7 @@ function appendBeadTriangles(p1, p2, radius, outPositions) {
 
 // --- RECTILINEAR INFILL GENERATOR (±45°) ---
 function generateLayerInfill(perimeterSegments, sliceY, layerIndex, densityPercent) {
-  if (densityPercent <= 0 || perimeterSegments.length < 3) return [];
+  if (!isInfillEnabled || densityPercent <= 0 || perimeterSegments.length < 3) return [];
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const [p1, p2] of perimeterSegments) {
@@ -578,11 +579,17 @@ function sliceGeometry(rawGeometry) {
     layerStartIndices.push({ layer: l + 1, segIndex: toolpathPoints.length });
 
     const orderedPerimeter = orderSegments(rawSegments);
-    const effectiveDensity = (infillDensity > 0 && (l < 2 || l >= numLayers - 2))
-      ? Math.max(infillDensity, 55)
-      : infillDensity;
-    const rawInfill = generateLayerInfill(rawSegments, sliceY, l, effectiveDensity);
-    const orderedInfill = rawInfill.length > 0 ? orderSegments(rawInfill) : [];
+    let orderedInfill = [];
+
+    if (isInfillEnabled) {
+      const effectiveDensity = (l < 2 || l >= numLayers - 2)
+        ? Math.max(infillDensity, 55)
+        : infillDensity;
+      const rawInfill = generateLayerInfill(rawSegments, sliceY, l, effectiveDensity);
+      if (rawInfill.length > 0) {
+        orderedInfill = orderSegments(rawInfill);
+      }
+    }
 
     const combined = [...orderedPerimeter, ...orderedInfill];
 
@@ -689,12 +696,11 @@ function loadSTLFromBuffer(buffer, saveToStorage = true) {
       }
       localStorage.setItem('savedCustomSTL', btoa(binary));
     } catch (e) {
-      // Ignore storage quota error if STL file is very large (>5MB)
+      // Ignore storage quota error if STL file is very large
     }
   }
 }
 
-// Restore previously selected STL if available, otherwise load default Torus Knot
 (function initInitialModel() {
   const savedBase64 = localStorage.getItem('savedCustomSTL');
   if (savedBase64) {
@@ -719,7 +725,7 @@ stlInput.addEventListener('change', (e) => {
   const reader = new FileReader();
   reader.onload = (ev) => loadSTLFromBuffer(ev.target.result, true);
   reader.readAsArrayBuffer(file);
-  e.target.value = ''; // Allow re-selecting the same file if modified
+  e.target.value = '';
 });
 
 window.addEventListener('dragover', (e) => e.preventDefault());
@@ -878,6 +884,8 @@ lockCameraToggle.addEventListener('change', (e) => setCameraLocked(e.target.chec
 
 // --- CUSTOMIZATION CONTROLS ---
 const filamentInput = document.getElementById('filamentColor');
+const infillToggle = document.getElementById('infillToggle');
+const infillDensityGroup = document.getElementById('infillDensityGroup');
 const infillSlider = document.getElementById('infillSlider');
 const infillVal = document.getElementById('infillVal');
 const printerInput = document.getElementById('printerColor');
@@ -890,6 +898,20 @@ const nightModeToggle = document.getElementById('nightModeToggle');
 const reverseLoopToggle = document.getElementById('reverseLoopToggle');
 const rotateSpeedSlider = document.getElementById('rotateSpeedSlider');
 const rotateSpeedVal = document.getElementById('rotateSpeedVal');
+
+function reslicePreservingProgress() {
+  if (!currentRawGeometry) return;
+  const prevProgress = totalSegments > 0 ? currentSegmentFloat / totalSegments : 0;
+  sliceGeometry(currentRawGeometry);
+  currentSegmentFloat = prevProgress * totalSegments;
+}
+
+function setInfillEnabled(enabled) {
+  isInfillEnabled = enabled;
+  infillToggle.checked = enabled;
+  infillDensityGroup.classList.toggle('disabled', !enabled);
+  reslicePreservingProgress();
+}
 
 function updateSpeed(newSpeed) {
   printSpeed = Math.max(0, newSpeed);
@@ -926,13 +948,13 @@ filamentInput.addEventListener('input', (e) => {
   }
 });
 
+infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked));
+
 infillSlider.addEventListener('input', (e) => {
   infillDensity = parseInt(e.target.value, 10);
   infillVal.textContent = `${infillDensity}%`;
-  if (currentRawGeometry) {
-    const prevProgress = totalSegments > 0 ? currentSegmentFloat / totalSegments : 0;
-    sliceGeometry(currentRawGeometry);
-    currentSegmentFloat = prevProgress * totalSegments;
+  if (isInfillEnabled) {
+    reslicePreservingProgress();
   }
 });
 
@@ -1002,11 +1024,16 @@ window.wallpaperPropertyListener = {
       if (isNightMode) filamentMaterial.emissive.copy(c);
       filamentInput.value = '#' + c.getHexString();
     }
+    if (properties.enableinfill !== undefined) {
+      setInfillEnabled(properties.enableinfill.value);
+    }
     if (properties.infilldensity !== undefined) {
       infillDensity = properties.infilldensity.value;
       infillSlider.value = infillDensity;
       infillVal.textContent = `${infillDensity}%`;
-      if (currentRawGeometry) sliceGeometry(currentRawGeometry);
+      if (isInfillEnabled) {
+        reslicePreservingProgress();
+      }
     }
     if (properties.printercolor) {
       const c = weColorToThree(properties.printercolor.value);
@@ -1042,10 +1069,6 @@ window.wallpaperPropertyListener = {
       controls.autoRotateSpeed = val;
       rotateSpeedSlider.value = val;
       rotateSpeedVal.textContent = val.toFixed(1);
-    }
-    if (properties.browsestl) {
-      // Trigger native Chromium file explorer filtered by .stl
-      stlInput.click();
     }
   }
 };
