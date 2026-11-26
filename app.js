@@ -9,8 +9,10 @@ const BUILD_HEIGHT = 150;
 const LAYER_HEIGHT = 0.55;
 const BEAD_RADIUS = 0.34;
 const BED_SURFACE_Y = 20;
-const SETTINGS_STORAGE_KEY = 'printerSimSettings_v3';
-const MODEL_STORAGE_KEY = 'savedCustomModel_v3';
+const DB_NAME = 'PrinterSimWallpaperDB';
+const DB_STORE = 'stateStore';
+const SETTINGS_KEY = 'appSettings_v4';
+const MODEL_KEY = 'customModel_v4';
 const BOOT_TIMESTAMP = performance.now();
 
 const defaultSettings = {
@@ -35,39 +37,58 @@ const defaultSettings = {
   camTarget: [0, BED_SURFACE_Y + 38, 0]
 };
 
-function readCookie(name) {
-  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-  return match ? decodeURIComponent(match[1]) : null;
+let appState = { ...defaultSettings };
+let hasLoadedPersistedDB = false;
+
+// --- INDEXEDDB PERSISTENT DISK STORAGE FOR WALLPAPER ENGINE CEF ---
+function openStateDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-function writeCookie(name, value) {
-  document.cookie = `${name}=${encodeURIComponent(value)}; max-age=315360000; path=/; SameSite=Lax`;
-}
-
-function hasPersistedSettings() {
-  return readCookie(SETTINGS_STORAGE_KEY) !== null || localStorage.getItem(SETTINGS_STORAGE_KEY) !== null;
-}
-
-function loadSavedSettings() {
+async function dbGet(key) {
   try {
-    const raw = readCookie(SETTINGS_STORAGE_KEY) || localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return { ...defaultSettings };
-    return { ...defaultSettings, ...JSON.parse(raw) };
+    const db = await openStateDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const req = tx.objectStore(DB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(req.error);
+    });
   } catch (e) {
-    return { ...defaultSettings };
+    return null;
   }
 }
 
-const appState = loadSavedSettings();
+async function dbSet(key, val) {
+  try {
+    const db = await openStateDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    // Ignore storage error
+  }
+}
 
 function saveSettings() {
-  const serialized = JSON.stringify(appState);
-  writeCookie(SETTINGS_STORAGE_KEY, serialized);
+  const snapshot = JSON.parse(JSON.stringify(appState));
+  dbSet(SETTINGS_KEY, snapshot);
   try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, serialized);
-  } catch (e) {
-    // Ignore storage quota errors
-  }
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshot));
+  } catch (e) { /* ignore */ }
 }
 
 let printSpeed = appState.printSpeed;
@@ -117,12 +138,8 @@ controls.maxDistance = 650;
 controls.autoRotate = appState.autoRotate;
 controls.autoRotateSpeed = appState.rotateSpeed;
 
-if (Array.isArray(appState.camPos) && appState.camPos.length === 3) {
-  camera.position.set(appState.camPos[0], appState.camPos[1], appState.camPos[2]);
-}
-if (Array.isArray(appState.camTarget) && appState.camTarget.length === 3) {
-  controls.target.set(appState.camTarget[0], appState.camTarget[1], appState.camTarget[2]);
-}
+camera.position.set(appState.camPos[0], appState.camPos[1], appState.camPos[2]);
+controls.target.set(appState.camTarget[0], appState.camTarget[1], appState.camTarget[2]);
 controls.update();
 
 let camSaveTimeout = null;
@@ -140,10 +157,11 @@ function scheduleCameraSave() {
       Number(controls.target.z.toFixed(2))
     ];
     saveSettings();
-  }, 250);
+  }, 200);
 }
 
 controls.addEventListener('change', scheduleCameraSave);
+controls.addEventListener('end', scheduleCameraSave);
 canvas.addEventListener('pointerdown', () => window.focus());
 
 // --- LIGHTING ---
@@ -201,7 +219,6 @@ const bedNeonMaterial = new THREE.MeshBasicMaterial({
   opacity: 0.0
 });
 
-// Switched dynamically between solid color (instant GPU tint) and 3MF vertexColors
 const filamentMaterial = new THREE.MeshStandardMaterial({
   color: appState.filamentColor,
   vertexColors: false,
@@ -280,7 +297,6 @@ function buildPrinter() {
 
 buildPrinter();
 
-// Fixed Heated Bed Assembly
 const bedAssembly = new THREE.Group();
 bedAssembly.position.y = BED_SURFACE_Y;
 
@@ -298,7 +314,6 @@ let bedGrid = new THREE.GridHelper(BED_SIZE, 16, 0x3a4052, 0x262a36);
 bedGrid.position.y = 0.2;
 bedAssembly.add(bedGrid);
 
-// --- DISCREET BUILD PLATE WATERMARK ("Jacataca*") ---
 function createBedWatermarkMesh() {
   const wmCanvas = document.createElement('canvas');
   wmCanvas.width = 512;
@@ -335,7 +350,6 @@ const bedWatermarkMesh = createBedWatermarkMesh();
 bedAssembly.add(bedWatermarkMesh);
 printerGroup.add(bedAssembly);
 
-// Flying Gantry Assembly
 const gantryYAssembly = new THREE.Group();
 gantryYAssembly.position.y = BED_SURFACE_Y + 20;
 printerGroup.add(gantryYAssembly);
@@ -354,7 +368,6 @@ const xRail = new THREE.Mesh(
 gantryBridge.add(xRail);
 gantryYAssembly.add(gantryBridge);
 
-// Extruder Toolhead
 const toolhead = new THREE.Group();
 const carriage = new THREE.Mesh(new THREE.BoxGeometry(22, 24, 22), chassisMaterial);
 carriage.position.y = 8;
@@ -446,7 +459,6 @@ function setChassisOpacity(alpha, persist = true) {
   if (persist) saveSettings();
 }
 
-// --- NIGHT MODE ---
 function setNightMode(enabled, persist = true) {
   isNightMode = enabled;
   appState.nightMode = enabled;
@@ -528,7 +540,6 @@ function setNightMode(enabled, persist = true) {
 let printedMesh = null;
 const VERTS_PER_SEGMENT = 18;
 
-// --- 3D EXTRUSION BEAD GENERATOR WITH VERTEX COLORS ---
 function appendBeadTriangles(p1, p2, radius, color, outPositions, outColors) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -643,7 +654,7 @@ function generateLayerInfill(perimeterSegObjs, sliceY, layerIndex, densityPercen
   return infillSegs;
 }
 
-// --- FAST .3MF PARSER (BAMBU STUDIO, ORCASLICER, PRUSASLICER & STANDARD 3MF) ---
+// --- FAST .3MF PARSER ---
 function parse3MFTransformMatrix(transformStr) {
   const mat = new THREE.Matrix4();
   if (!transformStr) return mat;
@@ -832,7 +843,6 @@ function parse3MFBuffer(buffer) {
       const vc = obj.vertCoords;
       const vertCount = vc.length / 3;
 
-      // Pre-transform all vertices of this object once
       const tx = new Float32Array(vertCount);
       const ty = new Float32Array(vertCount);
       const tz = new Float32Array(vertCount);
@@ -882,7 +892,6 @@ function parse3MFBuffer(buffer) {
   sliceCurrentModel();
 }
 
-// --- EXTRACT TRIANGLES FROM STL / THREE.JS MESH ---
 function extractTrianglesFromGeometry(geometry, defaultRotationX = -Math.PI / 2) {
   const triangles = [];
   const baseRotMatrix = new THREE.Matrix4().makeRotationX(defaultRotationX);
@@ -977,7 +986,6 @@ function sliceCurrentModel() {
   const modelHeight = sizeY * scaleFactor;
   const numLayers = Math.max(1, Math.floor(modelHeight / LAYER_HEIGHT));
 
-  // Build spatial Y-buckets so each layer only tests triangles intersecting that height
   const layerBuckets = Array.from({ length: numLayers }, () => []);
 
   for (let i = 0; i < triCount; i++) {
@@ -1158,7 +1166,7 @@ function loadDefaultModel() {
   extractTrianglesFromGeometry(geo, 0);
 }
 
-// --- .STL & .3MF FILE LOADING + PERSISTENCE ---
+// --- .STL & .3MF FILE LOADING + PERSISTENT INDEXEDDB STORAGE ---
 const stlLoader = new STLLoader();
 const modelInput = document.getElementById('modelInput');
 
@@ -1178,41 +1186,10 @@ function loadModelFromBuffer(buffer, fileName, saveToStorage = true) {
   }
 
   if (saveToStorage) {
-    try {
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-      }
-      localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify({
-        name: fileName,
-        data: btoa(binary)
-      }));
-    } catch (e) {
-      // Ignore storage quota error if model file is very large
-    }
+    // Store raw ArrayBuffer directly in IndexedDB (no base64 overhead, supports large .3mf files)
+    dbSet(MODEL_KEY, { name: fileName, buffer: buffer.slice(0) });
   }
 }
-
-(function initInitialModel() {
-  const savedRaw = localStorage.getItem(MODEL_STORAGE_KEY);
-  if (savedRaw) {
-    try {
-      const parsed = JSON.parse(savedRaw);
-      const binary = atob(parsed.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      loadModelFromBuffer(bytes.buffer, parsed.name || 'model.stl', false);
-      return;
-    } catch (e) {
-      localStorage.removeItem(MODEL_STORAGE_KEY);
-    }
-  }
-  loadDefaultModel();
-})();
 
 modelInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -1260,7 +1237,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// --- FIX COLOR PICKER FOCUS IN WALLPAPER ENGINE ---
 document.querySelectorAll('input[type="color"]').forEach(colorEl => {
   colorEl.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
@@ -1428,12 +1404,12 @@ function reslicePreservingProgress() {
   currentSegmentFloat = prevProgress * totalSegments;
 }
 
-function setInfillEnabled(enabled, persist = true) {
+function setInfillEnabled(enabled, persist = true, shouldSlice = true) {
   isInfillEnabled = enabled;
   appState.enableInfill = enabled;
   infillToggle.checked = enabled;
   infillDensityGroup.classList.toggle('disabled', !enabled);
-  reslicePreservingProgress();
+  if (shouldSlice) reslicePreservingProgress();
   if (persist) saveSettings();
 }
 
@@ -1451,7 +1427,6 @@ function updateSpeed(newSpeed, persist = true) {
   if (persist) saveSettings();
 }
 
-// Instant O(1) GPU filament color update without re-slicing
 function setFilamentColorHex(hex, persist = true) {
   appState.filamentColor = hex;
   filamentInput.value = hex;
@@ -1519,15 +1494,17 @@ function wrapAngleDeg(deg) {
   return a === -180 && deg > 0 ? 180 : a;
 }
 
-(function applySavedStateOnBoot() {
+function applyAllSettingsToScene(shouldSlice = false) {
+  use3mfColors = appState.use3mfColors;
   use3mfColorsToggle.checked = appState.use3mfColors;
   setFilamentColorHex(appState.filamentColor, false);
   setPrinterColorHex(appState.printerColor, false);
   setChassisOpacity(appState.chassisOpacity, false);
   setBgColorHex(appState.bgColor, false);
+  infillDensity = appState.infillDensity;
   infillSlider.value = appState.infillDensity;
   infillVal.textContent = `${appState.infillDensity}%`;
-  setInfillEnabled(appState.enableInfill, false);
+  setInfillEnabled(appState.enableInfill, false, shouldSlice);
   updateSpeed(appState.printSpeed, false);
   setNightMode(appState.nightMode, false);
   setReverseLoop(appState.reverseLoop, false);
@@ -1535,6 +1512,33 @@ function wrapAngleDeg(deg) {
   setRotateSpeed(appState.rotateSpeed, false);
   setCameraLocked(appState.lockCamera, false);
   updateTransformUI();
+
+  if (Array.isArray(appState.camPos) && appState.camPos.length === 3) {
+    camera.position.set(appState.camPos[0], appState.camPos[1], appState.camPos[2]);
+  }
+  if (Array.isArray(appState.camTarget) && appState.camTarget.length === 3) {
+    controls.target.set(appState.camTarget[0], appState.camTarget[1], appState.camTarget[2]);
+  }
+  controls.update();
+}
+
+// --- ASYNC BOOT FROM PERSISTENT INDEXEDDB ---
+(async function bootFromDiskStorage() {
+  const savedSettings = await dbGet(SETTINGS_KEY);
+  if (savedSettings) {
+    appState = { ...defaultSettings, ...savedSettings };
+    hasLoadedPersistedDB = true;
+    applyAllSettingsToScene(false);
+  } else {
+    applyAllSettingsToScene(false);
+  }
+
+  const savedModel = await dbGet(MODEL_KEY);
+  if (savedModel && savedModel.buffer) {
+    loadModelFromBuffer(savedModel.buffer, savedModel.name || 'model.stl', false);
+  } else {
+    loadDefaultModel();
+  }
 })();
 
 playPauseBtn.addEventListener('click', () => {
@@ -1547,9 +1551,7 @@ playPauseBtn.addEventListener('click', () => {
 
 nightModeBtn.addEventListener('click', () => setNightMode(!isNightMode, true));
 nightModeToggle.addEventListener('change', (e) => setNightMode(e.target.checked, true));
-
 reverseLoopToggle.addEventListener('change', (e) => setReverseLoop(e.target.checked, true));
-
 filamentInput.addEventListener('input', (e) => setFilamentColorHex(e.target.value, true));
 
 use3mfColorsToggle.addEventListener('change', (e) => {
@@ -1559,7 +1561,7 @@ use3mfColorsToggle.addEventListener('change', (e) => {
   saveSettings();
 });
 
-infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked, true));
+infillToggle.addEventListener('change', (e) => setInfillEnabled(e.target.checked, true, true));
 
 infillSlider.addEventListener('input', (e) => {
   infillDensity = parseInt(e.target.value, 10);
@@ -1572,22 +1574,11 @@ infillSlider.addEventListener('input', (e) => {
 });
 
 printerInput.addEventListener('input', (e) => setPrinterColorHex(e.target.value, true));
-
-chassisOpacitySlider.addEventListener('input', (e) => {
-  setChassisOpacity(parseFloat(e.target.value), true);
-});
-
+chassisOpacitySlider.addEventListener('input', (e) => setChassisOpacity(parseFloat(e.target.value), true));
 bgInput.addEventListener('input', (e) => setBgColorHex(e.target.value, true));
-
-speedSlider.addEventListener('input', (e) => {
-  updateSpeed(parseFloat(e.target.value), true);
-});
-
+speedSlider.addEventListener('input', (e) => updateSpeed(parseFloat(e.target.value), true));
 autoRotateToggle.addEventListener('change', (e) => setAutoRotate(e.target.checked, true));
-
-rotateSpeedSlider.addEventListener('input', (e) => {
-  setRotateSpeed(parseFloat(e.target.value), true);
-});
+rotateSpeedSlider.addEventListener('input', (e) => setRotateSpeed(parseFloat(e.target.value), true));
 
 modelScaleSlider.addEventListener('input', (e) => {
   appState.modelScale = parseInt(e.target.value, 10);
@@ -1658,8 +1649,19 @@ window.wallpaperPropertyListener = {
       }
     }
 
-    const isDuringBootBurst = (performance.now() - BOOT_TIMESTAMP) < 1500;
-    if (isDuringBootBurst && hasPersistedSettings()) {
+    // Load model chosen via Wallpaper Engine's native file picker if provided
+    if (properties.modelfile && properties.modelfile.value) {
+      const filePath = properties.modelfile.value;
+      const fileUrl = filePath.startsWith('file://') ? filePath : 'file:///' + filePath.replace(/\\/g, '/');
+      fetch(fileUrl)
+        .then(res => res.arrayBuffer())
+        .then(buf => loadModelFromBuffer(buf, filePath, true))
+        .catch(() => { /* ignore if file path is empty */ });
+    }
+
+    // Ignore Wallpaper Engine's initial default property bursts when user already has saved settings in IndexedDB
+    const isDuringBootBurst = (performance.now() - BOOT_TIMESTAMP) < 2000;
+    if (isDuringBootBurst && hasLoadedPersistedDB) {
       return;
     }
 
@@ -1675,8 +1677,15 @@ window.wallpaperPropertyListener = {
     if (properties.filamentcolor) {
       setFilamentColorHex(weColorToHex(properties.filamentcolor.value), true);
     }
+    if (properties.use3mfcolors !== undefined) {
+      use3mfColors = properties.use3mfColors.value;
+      appState.use3mfColors = use3mfColors;
+      use3mfColorsToggle.checked = use3mfColors;
+      syncFilamentMaterialMode();
+      saveSettings();
+    }
     if (properties.enableinfill !== undefined) {
-      setInfillEnabled(properties.enableinfill.value, true);
+      setInfillEnabled(properties.enableinfill.value, true, true);
     }
     if (properties.infilldensity !== undefined) {
       infillDensity = properties.infilldensity.value;
