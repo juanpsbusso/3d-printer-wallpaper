@@ -8,42 +8,54 @@
     "properties": {
       "showwebmenu": {
         "order": 1,
-        "text": "Show Settings Gear Button (Load .STL / .3MF inside)",
+        "text": "Show Settings Gear Button",
         "type": "bool",
         "value": true
       },
-      "nightmode": {
+      "modelfile": {
         "order": 2,
+        "text": "Custom 3D Model (.stl / .3mf)",
+        "type": "file",
+        "fileType": "any"
+      },
+      "nightmode": {
+        "order": 3,
         "text": "Night Mode",
         "type": "bool",
         "value": false
       },
       "reverseloop": {
-        "order": 3,
+        "order": 4,
         "text": "Reverse Loop",
         "type": "bool",
         "value": true
       },
       "lockcamera": {
-        "order": 4,
+        "order": 5,
         "text": "Lock Camera Position",
         "type": "bool",
         "value": false
       },
       "filamentcolor": {
-        "order": 5,
+        "order": 6,
         "text": "Filament Color",
         "type": "color",
         "value": "0 0.66 1"
       },
+      "use3mfcolors": {
+        "order": 7,
+        "text": "Use .3MF Embedded Colors",
+        "type": "bool",
+        "value": true
+      },
       "enableinfill": {
-        "order": 6,
-        "text": "Print Infill (Uncheck for Walls Only)",
+        "order": 8,
+        "text": "Print Infill",
         "type": "bool",
         "value": true
       },
       "infilldensity": {
-        "order": 7,
+        "order": 9,
         "text": "Infill Density (%)",
         "type": "slider",
         "min": 10,
@@ -51,13 +63,13 @@
         "value": 20
       },
       "printercolor": {
-        "order": 8,
+        "order": 10,
         "text": "Frame Color",
         "type": "color",
         "value": "0.14 0.15 0.19"
       },
       "chassisopacity": {
-        "order": 9,
+        "order": 11,
         "text": "Frame Opacity",
         "type": "slider",
         "min": 0.0,
@@ -65,13 +77,13 @@
         "value": 0.35
       },
       "bgcolor": {
-        "order": 10,
+        "order": 12,
         "text": "Background Color",
         "type": "color",
         "value": "0.05 0.06 0.08"
       },
       "printspeed": {
-        "order": 11,
+        "order": 13,
         "text": "Print Speed (0 = Pause)",
         "type": "slider",
         "min": 0.0,
@@ -79,13 +91,13 @@
         "value": 1.0
       },
       "autorotate": {
-        "order": 12,
+        "order": 14,
         "text": "Auto Rotate Camera",
         "type": "bool",
         "value": true
       },
       "rotatespeed": {
-        "order": 13,
+        "order": 15,
         "text": "Camera Rotate Speed",
         "type": "slider",
         "min": 0.1,
